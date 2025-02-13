@@ -1,0 +1,5 @@
+services:
+  tph:
+    build:
+      context: ./tph
+    privileged: true
