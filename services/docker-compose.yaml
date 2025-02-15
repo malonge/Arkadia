@@ -1,5 +1,19 @@
 services:
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+
   tph:
     build:
       context: ./tph
     privileged: true
+    depends_on:
+      - redis
+
+  tph-tests:
+    build:
+      context: ./tph
+    command: pytest tests/test_tph.py
+    depends_on:
+      - tph
