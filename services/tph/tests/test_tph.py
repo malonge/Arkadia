@@ -52,16 +52,16 @@ def test_get_data_sample(mock_sample):
 
 def test_is_valid_sample(sample_df, invalid_df):
     # Test valid sample
-    assert is_valid_sample(sample_df) == True
+    assert is_valid_sample(sample_df)
     
     # Test invalid cases
-    assert is_valid_sample(pd.DataFrame()) == False  # Empty DataFrame
-    assert is_valid_sample(invalid_df) == False  # Contains NaN
+    assert not is_valid_sample(pd.DataFrame())
+    assert not is_valid_sample(invalid_df)
     
     # Test high sensor time variance
     high_variance_df = sample_df.copy()
     high_variance_df['sensor_time'] = [0.001, 0.1, 0.2]  # High variance
-    assert is_valid_sample(high_variance_df) == False
+    assert not is_valid_sample(high_variance_df)
 
 @patch('redis.Redis')
 def test_connect_redis(mock_redis):
