@@ -13,6 +13,8 @@ docker compose up
 
 ## Services
 
+> Unit tests are available for all services by adding `-tests` to the service name. For example, `docker compose run tph-tests` will run the unit tests for the tph service.
+
 ### tph
 
 This service measures temperature, prressure and humidity using a BME280 sensor and a Raspberry Pi. It periodically samples sensor data and stores the median values in a Redis cache.
@@ -20,3 +22,13 @@ This service measures temperature, prressure and humidity using a BME280 sensor 
 ```bash
 docker compose run tph
 ```
+
+### data
+
+This service is a simple FastAPI application that exposes sensor data via a REST API.
+
+```bash
+docker compose run data
+```
+
+The API documentation is available at `http://localhost:8000/docs`. There is currently only [one endpoint](http://localhost:8000/api/v1/tph) — the endpoint that retrieves tph data.

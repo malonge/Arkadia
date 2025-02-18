@@ -3,6 +3,11 @@ services:
     image: redis:latest
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
 
   tph:
     build:
@@ -17,3 +22,21 @@ services:
     command: pytest tests/test_tph.py
     depends_on:
       - tph
+
+  data:
+    build:
+      context: ./data
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+
+  data-tests:
+    build:
+      context: ./data
+    command: pytest tests/
+    depends_on:
+      redis:
+        condition: service_healthy
+      data:
+        condition: service_started
