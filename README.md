@@ -40,3 +40,7 @@ This service is a React application that displays sensor data.
 ```bash
 docker compose run web
 ```
+
+An example screenshot of the web application:
+
+![Web Application Screenshot](./assets/web_example.png)
