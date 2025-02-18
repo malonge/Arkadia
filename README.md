@@ -13,7 +13,7 @@ docker compose up
 
 ## Services
 
-> Unit tests are available for all services by adding `-tests` to the service name. For example, `docker compose run tph-tests` will run the unit tests for the tph service.
+> Unit tests are available for most services by adding `-tests` to the service name. For example, `docker compose run tph-tests` will run the unit tests for the tph service.
 
 ### tph
 
@@ -32,3 +32,15 @@ docker compose run data
 ```
 
 The API documentation is available at `http://localhost:8000/docs`. There is currently only [one endpoint](http://localhost:8000/api/v1/tph) — the endpoint that retrieves tph data.
+
+### web
+
+This service is a React application that displays sensor data.
+
+```bash
+docker compose run web
+```
+
+An example screenshot of the web application:
+
+![Web Application Screenshot](./assets/web_example.png)
