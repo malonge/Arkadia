@@ -3,66 +3,75 @@ This service measures temperature, prressure and humidity using a BME280 sensor 
 It periodically samples sensor data and stores the median values in a Redis cache.
 """
 
+import os
 import time
+import datetime
 import json
 import logging
 
+import pytz
 import pandas as pd
 import redis
-import smbus2
-import bme280
+
+from bme280_client import BME280Client
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tph")
 
 
-def get_data_sample(n: int, r: int, bus: smbus2.SMBus, address: int, calibration_params: bme280.params) -> pd.DataFrame:
+def get_data_sample(n: int, r: int, client: BME280Client) -> pd.DataFrame:
     """
     Get a sample of data from the BME280 sensor.
 
     Args:
         n: The number of samples to take.
         r: The time to wait between samples in seconds.
-        bus: The SMBus object.
-        address: The I2C address of the BME280 sensor.
-        calibration_params: The calibration parameters for the BME280 sensor.
+        client: The BME280Client object.
 
     Returns:
         A pandas DataFrame containing the data.
     """
+    sensor_times = []
     timestamps = []
     temperatures = []
-    humidities = [] 
+    humidities = []
     pressures = []
-    sensor_times = []
 
     for _ in range(n):
         sensor_start = time.time()
-        data = bme280.sample(bus, address, calibration_params)
+        data = client.read_data()
         sensor_times.append(time.time() - sensor_start)
-        
-        timestamps.append(data.timestamp)
-        temperatures.append(data.temperature)
-        humidities.append(data.humidity)
-        pressures.append(data.pressure)
+
+        timestamps.append(
+            datetime.datetime.fromtimestamp(data["timestamp"], pytz.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+        )
+        temperatures.append(data["temperature"])
+        humidities.append(data["humidity"])
+        pressures.append(data["pressure"])
         time.sleep(r)
 
-    df = pd.DataFrame({
-        "timestamp": timestamps,
-        "temperature": temperatures,
-        "humidity": humidities,
-        "pressure": pressures,
-        "sensor_time": sensor_times
-    })
+    df = pd.DataFrame(
+        {
+            "sensor_time": sensor_times,
+            "timestamp": timestamps,
+            "temperature": temperatures,
+            "humidity": humidities,
+            "pressure": pressures,
+        }
+    )
 
-    df = df.astype({
-        "timestamp": "datetime64[ns]",
-        "temperature": "float64",
-        "humidity": "float64", 
-        "pressure": "float64",
-        "sensor_time": "float64"
-    })
+    df = df.astype(
+        {
+            "temperature": "float64",
+            "humidity": "float64",
+            "pressure": "float64",
+            "sensor_time": "float64",
+            "timestamp": "string",
+        }
+    )
 
     return df
 
@@ -81,7 +90,8 @@ def is_valid_sample(sample_data: pd.DataFrame) -> bool:
         return False
     if sample_data.isnull().any().any():
         return False
-    if sample_data['sensor_time'].std() > 0.01:
+    if sample_data["sensor_time"].std() > 0.01:
+        logger.warning("Sensor read time standard deviation is too high")
         return False
     return True
 
@@ -108,20 +118,24 @@ def connect_redis(retries=5, delay=1):
 
 
 def main():
-    """ Main function to run the TPH service. """
+    """Main function to run the TPH service."""
     # BME280 and redis initialization
     logger.info("Initializing BME280")
     port = 1
-    address = 0x76
-    bus = smbus2.SMBus(port)
-    calibration_params = bme280.load_calibration_params(bus, address)
+    address = os.getenv("I2C_ADDRESS")
+    if not address:
+        raise ValueError("I2C_ADDRESS environment variable is not set")
+
+    address = int(address, 16)
+    logger.info(f"Using I2C address: {address}")
+
+    client = BME280Client(port, address)
     logger.info("BME280 initialized")
     cache = connect_redis()
 
-    # Main loop
     while True:
         try:
-            sample_data = get_data_sample(20, 0.1, bus, address, calibration_params)
+            sample_data = get_data_sample(20, 0.1, client)
             logger.info(f"Sampled data:\n{sample_data.describe()}")
         except Exception as e:
             logger.error(f"Error sampling data: {e}")
@@ -129,10 +143,10 @@ def main():
 
         if is_valid_sample(sample_data):
             median_data = {
-                'temperature': sample_data['temperature'].median(),
-                'humidity': sample_data['humidity'].median(), 
-                'pressure': sample_data['pressure'].median(),
-                'timestamp': str(sample_data['timestamp'].max())
+                "temperature": sample_data["temperature"].median(),
+                "humidity": sample_data["humidity"].median(),
+                "pressure": sample_data["pressure"].median(),
+                "timestamp": sample_data["timestamp"].max(),
             }
             cache.set("tph", json.dumps(median_data))
         else:
