@@ -12,6 +12,8 @@ services:
   tph:
     build:
       context: ./tph
+    environment:
+      - I2C_ADDRESS=0x76
     privileged: true
     depends_on:
       - redis
@@ -19,6 +21,8 @@ services:
   tph-tests:
     build:
       context: ./tph
+    environment:
+      - I2C_ADDRESS=0x76
     command: pytest tests/test_tph.py
     depends_on:
       - tph
@@ -30,6 +34,7 @@ services:
       - "8000:8000"
     depends_on:
       - redis
+      - tph
 
   data-tests:
     build:
