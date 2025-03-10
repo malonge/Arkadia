@@ -24,7 +24,13 @@ class TPHData(BaseModel):
     temperature: float
     pressure: float 
     humidity: float
-    timestamp: str
+    timestamp: datetime
+
+    model_config = {
+        "json_encoders": {
+            datetime: lambda v: v.isoformat()  # Remove the "Z" suffix
+        }
+    }
 
 class RedisClient:
     _instance: Optional[Redis] = None
@@ -98,18 +104,16 @@ async def get_tph_data(redis: Redis = Depends(get_redis)):
         - temperature (float): Temperature in Celsius
         - pressure (float): Pressure in hPa
         - humidity (float): Relative humidity percentage
-        - timestamp (str): ISO format timestamp of the measurement
+        - timestamp (str): ISO 8601 format timestamp with timezone offset
     """
     data = await redis.get("tph")
+    logger.info(f"TPH data: {data}")
     
     if not data:
         raise HTTPException(status_code=404, detail="No TPH data available")
     
     try:
         tph_data = json.loads(data)
-        # Convert timestamp string to ISO format
-        timestamp = datetime.fromisoformat(tph_data['timestamp'])
-        tph_data['timestamp'] = timestamp.isoformat()
         return TPHData(**tph_data)
     except Exception as e:
         logger.error(f"Error processing TPH data: {e}")

@@ -3,7 +3,6 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 from redis.asyncio import Redis
-from pytest_asyncio import fixture
 
 from main import app, get_redis
 
@@ -12,7 +11,7 @@ SAMPLE_TPH_DATA = {
     "temperature": 21.5,
     "pressure": 1013.25,
     "humidity": 45.7,
-    "timestamp": "2024-01-01T12:00:00"
+    "timestamp": "2024-01-01T12:00:00+00:00"
 }
 
 @pytest.fixture
