@@ -25,8 +25,30 @@ from pydantic import ValidationError
 # ---------------------------------------------------------------------------
 
 SERVICE_DIR = Path(__file__).resolve().parent.parent / "services" / "bme280"
-if str(SERVICE_DIR) not in sys.path:
-    sys.path.insert(0, str(SERVICE_DIR))
+
+_OTHER_SERVICE_DIRS = [
+    Path(__file__).resolve().parent.parent / "services" / "scd40",
+]
+
+
+def _activate_service_path() -> None:
+    """Ensure SERVICE_DIR is the active service directory on sys.path.
+
+    Removes any other service directories that also contain a sensor.py so
+    that 'from sensor import ...' always resolves to this service's module.
+    """
+    for d in _OTHER_SERVICE_DIRS:
+        try:
+            sys.path.remove(str(d))
+        except ValueError:
+            pass
+    if sys.path[:1] != [str(SERVICE_DIR)]:
+        try:
+            sys.path.remove(str(SERVICE_DIR))
+        except ValueError:
+            pass
+        sys.path.insert(0, str(SERVICE_DIR))
+    sys.modules.pop("sensor", None)
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +116,9 @@ def _remove_fakes():
 # ---------------------------------------------------------------------------
 
 class TestBME280SensorConstruction:
+    def setup_method(self):
+        _activate_service_path()
+
     def test_default_address(self):
         from sensor import BME280Sensor
         s = BME280Sensor(address=0x76)
@@ -127,10 +152,8 @@ class TestBME280SensorConstruction:
 
 class TestBME280SensorRead:
     def setup_method(self):
+        _activate_service_path()
         _remove_fakes()
-        # Re-import sensor fresh so module-level state is clean.
-        if "sensor" in sys.modules:
-            del sys.modules["sensor"]
 
     def teardown_method(self):
         _remove_fakes()
