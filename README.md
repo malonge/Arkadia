@@ -43,19 +43,135 @@ arkadia/
 
 ---
 
-## Quick Start
+## Development Quick Start
 
-### Install the shared library
+These steps are for running the unit tests on any machine (no hardware required).
+
+Pi OS Bookworm (and any modern Debian/Ubuntu) enforces [PEP 668](https://peps.python.org/pep-0668/) — you cannot install packages into the system Python directly. Always use a virtual environment.
 
 ```bash
+# Create and activate a virtualenv
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install the common library in editable mode
 pip install -e .
-```
 
-### Run the tests
-
-```bash
+# Run the tests
 pip install pytest
 pytest
+```
+
+---
+
+## Deploying on Raspberry Pi
+
+### 1. Enable I2C
+
+```bash
+sudo raspi-config
+# → Interface Options → I2C → Enable
+# Reboot after enabling.
+```
+
+Or add the line directly and reboot:
+
+```bash
+echo "dtparam=i2c_arm=on" | sudo tee -a /boot/firmware/config.txt
+sudo reboot
+```
+
+Verify I2C is up and your sensor is visible:
+
+```bash
+sudo apt-get install -y i2c-tools
+i2cdetect -y 1
+# BME280 shows as 0x76 or 0x77
+```
+
+### 2. Install system packages
+
+```bash
+sudo bash scripts/setup.sh
+```
+
+This installs Mosquitto and applies `mosquitto/mosquitto.conf`.
+
+### 3. Create the environment file
+
+All services read `/etc/home-monitor.env` for the repository root path and any secrets.  Create it before enabling any service:
+
+```bash
+sudo tee /etc/home-monitor.env > /dev/null << EOF
+# Absolute path to the Arkadia repository on this machine.
+ARKADIA_ROOT=/home/$(whoami)/Projects/Arkadia
+EOF
+```
+
+Adjust the path to match where you cloned the repo.
+
+### 4. Set up the BME280 service virtualenv
+
+```bash
+cd services/bme280
+
+# Create a virtualenv dedicated to this service
+python3 -m venv .venv
+
+# Install the common library from the repo
+.venv/bin/pip install -e ../..
+
+# Install the sensor driver and hardware abstraction layer
+.venv/bin/pip install -r requirements.txt
+```
+
+### 5. Test the service manually before enabling systemd
+
+```bash
+# Make sure Mosquitto is running
+sudo systemctl start mosquitto
+
+# Run the service in the foreground — you should see JSON log lines
+# and retained MQTT messages after ~35 s (5 samples × 0.5 s + 30 s sleep)
+.venv/bin/python main.py
+```
+
+In another terminal, subscribe to verify the payload arrives:
+
+```bash
+mosquitto_sub -h 127.0.0.1 -t 'home/sensors/climate/bme280' -v
+```
+
+Press Ctrl-C to stop the service once you have confirmed it is working.
+
+### 6. Install and enable the systemd service
+
+The service file uses the `ARKADIA_ROOT` variable from `/etc/home-monitor.env` for all paths.  Before installing, update the `User=` line to match your actual username:
+
+```bash
+# Edit the user if needed (default is 'pi')
+grep "User=" services/bme280/bme280.service
+
+# Copy the service file
+sudo cp services/bme280/bme280.service /etc/systemd/system/
+
+# Reload systemd and enable
+sudo systemctl daemon-reload
+sudo systemctl enable bme280
+sudo systemctl start bme280
+```
+
+### 7. Verify
+
+```bash
+# Check service status
+sudo systemctl status bme280
+
+# Watch structured JSON logs
+journalctl -u bme280 -f
+
+# Watch the MQTT topic
+mosquitto_sub -h 127.0.0.1 -t 'home/sensors/climate/bme280' -v
 ```
 
 ---
@@ -70,14 +186,7 @@ pytest
 
 ---
 
-## Setup and Deploy
-
-```bash
-sudo bash scripts/setup.sh   # Install system packages and create virtualenvs
-sudo bash scripts/deploy.sh  # Install and start systemd services
-```
-
-### Mosquitto smoke test
+## Mosquitto smoke test
 
 After running `setup.sh`, verify the broker with a publish/subscribe round-trip:
 
@@ -114,7 +223,7 @@ journalctl -u mosquitto -f
 
 - Global defaults: `config/global.toml`
 - Per-service overrides: `services/<name>/config.toml`
-- Secrets: `/etc/home-monitor.env` (created by `setup.sh`)
+- Paths and secrets: `/etc/home-monitor.env`
 
 ---
 

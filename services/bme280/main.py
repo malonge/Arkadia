@@ -24,6 +24,12 @@ from common.i2c import I2CError
 from common.models import BME280Payload, BME280Readings, Diagnostics, Meta
 from common.mqtt import MQTTClient, configure_logging
 
+# Ensure sensor.py is importable regardless of the working directory.
+# When running under systemd, WorkingDirectory is not set (to avoid
+# requiring it to expand env vars), so we add the service directory
+# to sys.path explicitly using __file__ which is always absolute.
+sys.path.insert(0, str(Path(__file__).parent))
+
 from sensor import BME280Sensor
 
 logger = logging.getLogger("bme280")

@@ -11,18 +11,32 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
+
+# Change 'pi' to your actual username.
 User=pi
 Group=i2c
-WorkingDirectory=/home/pi/Arkadia/services/bme280
-ExecStart=/home/pi/Arkadia/services/bme280/.venv/bin/python main.py
+
+# /etc/home-monitor.env must exist and define ARKADIA_ROOT — the absolute
+# path to this repository on the target machine.  Example:
+#   ARKADIA_ROOT=/home/pi/Projects/Arkadia
+# systemd expands ${ARKADIA_ROOT} in ExecStart from this file.
+EnvironmentFile=/etc/home-monitor.env
+
+# Full paths are used here because WorkingDirectory= does not expand
+# environment variables.  sys.path in main.py ensures sensor.py is found
+# regardless of the working directory.
+#
+# Note: 'systemd-analyze verify' will report a false positive here because
+# that tool does not load EnvironmentFile during static analysis.  At
+# runtime the systemd daemon DOES expand ${ARKADIA_ROOT} from the env file
+# before executing the command.
+ExecStart=${ARKADIA_ROOT}/services/bme280/.venv/bin/python \
+          ${ARKADIA_ROOT}/services/bme280/main.py
+
 Restart=on-failure
 RestartSec=5
 # Allow up to 15 s for a clean shutdown (covers the worst-case poll cycle).
 TimeoutStopSec=15
-
-# Environment — secrets and overrides live outside the repo.
-# The leading '-' makes the file optional so the service starts without it.
-EnvironmentFile=-/etc/home-monitor.env
 
 # Log via journald.
 StandardOutput=journal
