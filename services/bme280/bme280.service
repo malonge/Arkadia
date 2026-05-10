@@ -19,19 +19,17 @@ Group=i2c
 # /etc/home-monitor.env must exist and define ARKADIA_ROOT — the absolute
 # path to this repository on the target machine.  Example:
 #   ARKADIA_ROOT=/home/pi/Projects/Arkadia
-# systemd expands ${ARKADIA_ROOT} in ExecStart from this file.
 EnvironmentFile=/etc/home-monitor.env
 
-# Full paths are used here because WorkingDirectory= does not expand
-# environment variables.  sys.path in main.py ensures sensor.py is found
-# regardless of the working directory.
-#
-# Note: 'systemd-analyze verify' will report a false positive here because
-# that tool does not load EnvironmentFile during static analysis.  At
-# runtime the systemd daemon DOES expand ${ARKADIA_ROOT} from the env file
-# before executing the command.
-ExecStart=${ARKADIA_ROOT}/services/bme280/.venv/bin/python \
-          ${ARKADIA_ROOT}/services/bme280/main.py
+# ExecStart uses /bin/bash as the executable (always an absolute path that
+# systemd can validate at parse time).  Bash then inherits the environment
+# that systemd loaded from EnvironmentFile — including ARKADIA_ROOT — and
+# expands it inside the double-quoted exec string.  This sidesteps the
+# systemd limitation that env vars from EnvironmentFile are NOT expanded
+# when systemd itself validates the ExecStart executable path.
+ExecStart=/bin/bash -c \
+  'exec "${ARKADIA_ROOT}/services/bme280/.venv/bin/python" \
+        "${ARKADIA_ROOT}/services/bme280/main.py"'
 
 Restart=on-failure
 RestartSec=5
