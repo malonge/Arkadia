@@ -36,6 +36,14 @@ RestartSec=5
 # Allow up to 15 s for a clean shutdown (covers the worst-case poll cycle).
 TimeoutStopSec=15
 
+# Create /run/bme280 owned by the service user before starting.
+# This gives lgpio (the GPIO backend used by adafruit-blinka on Pi 5) a
+# writable directory for its named-pipe notification files (.lgd-nfy*).
+# Without this, lgpio tries to create those files in the default CWD (/),
+# which is read-only under ProtectSystem=full.
+RuntimeDirectory=bme280
+WorkingDirectory=/run/bme280
+
 # Log via journald.
 StandardOutput=journal
 StandardError=journal
