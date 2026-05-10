@@ -24,20 +24,25 @@ See [`docs/tech-design.md`](docs/tech-design.md) for the full technical design.
 
 ```
 arkadia/
-├── common/            # Shared library (config, models, MQTT, I2C)
+├── common/                    # Shared library (config, models, MQTT, I2C)
 ├── services/
-│   ├── bme280/        # Temperature / humidity / pressure service
-│   ├── scd40/         # CO₂ service
-│   ├── audio/         # Ambient sound service
-│   └── api/           # REST API service
+│   ├── bme280/
+│   │   ├── sensor.py          # BME280 driver (wraps adafruit-circuitpython-bme280)
+│   │   ├── main.py            # Polling loop + MQTT publish
+│   │   ├── config.toml        # Sensor and MQTT settings
+│   │   ├── bme280.service     # systemd unit file
+│   │   └── requirements.txt
+│   ├── scd40/                 # CO₂ service (pending)
+│   ├── audio/                 # Ambient sound service (pending)
+│   └── api/                   # REST API service (pending)
 ├── config/
-│   └── global.toml    # Shared broker and logging defaults
+│   └── global.toml            # Shared broker and logging defaults
 ├── mosquitto/
-│   └── mosquitto.conf # Broker configuration
+│   └── mosquitto.conf         # Broker configuration
 ├── scripts/
-│   ├── setup.sh       # First-time system setup
-│   └── deploy.sh      # Service deployment / restart
-├── tests/             # Unit tests (no hardware required)
+│   ├── setup.sh               # First-time system setup
+│   └── deploy.sh              # Service deployment / restart (pending)
+├── tests/                     # Unit tests (no hardware required)
 └── pyproject.toml
 ```
 
@@ -86,8 +91,18 @@ Verify I2C is up and your sensor is visible:
 ```bash
 sudo apt-get install -y i2c-tools
 i2cdetect -y 1
-# BME280 shows as 0x76 or 0x77
 ```
+
+You should see `76` or `77` in the grid output:
+
+```
+     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+00:                         -- -- -- -- -- -- -- -- --
+...
+70: -- -- -- -- -- -- 76 --
+```
+
+If your sensor appears at `77` (SDO pin pulled high), edit `services/bme280/config.toml` and change `i2c_address = 0x76` to `i2c_address = 0x77` before continuing.
 
 ### 2. Install system packages
 
@@ -146,20 +161,37 @@ Press Ctrl-C to stop the service once you have confirmed it is working.
 
 ### 6. Install and enable the systemd service
 
-The service file uses the `ARKADIA_ROOT` variable from `/etc/home-monitor.env` for all paths.  Before installing, update the `User=` line to match your actual username:
-
 ```bash
-# Edit the user if needed (default is 'pi')
-grep "User=" services/bme280/bme280.service
-
-# Copy the service file
+# Install the service file
 sudo cp services/bme280/bme280.service /etc/systemd/system/
+
+# Change the User= field in the installed copy to your actual username
+sudo sed -i "s/^User=pi$/User=$(whoami)/" /etc/systemd/system/bme280.service
+
+# Confirm it looks right
+grep "^User=" /etc/systemd/system/bme280.service
 
 # Reload systemd and enable
 sudo systemctl daemon-reload
 sudo systemctl enable bme280
 sudo systemctl start bme280
 ```
+
+> **Note for Pi 5 / adafruit-blinka:** `lgpio` (the GPIO backend) creates
+> temporary notification files in the service's working directory.
+> `bme280.service` already sets `RuntimeDirectory=bme280` and
+> `WorkingDirectory=/run/bme280` to give it a writable location.  If you
+> ever need to re-apply this fix to an already-installed service file (e.g.
+> after installing from an older commit), use a drop-in override:
+> ```bash
+> sudo mkdir -p /etc/systemd/system/bme280.service.d
+> sudo tee /etc/systemd/system/bme280.service.d/workdir.conf > /dev/null << 'EOF'
+> [Service]
+> RuntimeDirectory=bme280
+> WorkingDirectory=/run/bme280
+> EOF
+> sudo systemctl daemon-reload
+> ```
 
 ### 7. Verify
 
