@@ -2,6 +2,7 @@
 
 import json
 import logging
+import sys
 import time
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch, call
@@ -21,31 +22,31 @@ class TestSubscribeStoresQoS:
         return MQTTClient(client_id="test-client", broker_host="localhost")
 
     def test_default_qos_stored(self):
+        def cb(topic, payload): pass
         client = self._make_client()
-        cb = lambda topic, payload: None
         client.subscribe("home/sensors/#", cb)
         stored_cb, stored_qos = client._message_callbacks["home/sensors/#"]
         assert stored_cb is cb
         assert stored_qos == 1  # the wrapper's default
 
     def test_explicit_qos_stored(self):
+        def cb(topic, payload): pass
         client = self._make_client()
-        cb = lambda topic, payload: None
         client.subscribe("home/sensors/#", cb, qos=2)
         _, stored_qos = client._message_callbacks["home/sensors/#"]
         assert stored_qos == 2
 
     def test_qos_zero_stored(self):
+        def cb(topic, payload): pass
         client = self._make_client()
-        cb = lambda topic, payload: None
         client.subscribe("home/sensors/#", cb, qos=0)
         _, stored_qos = client._message_callbacks["home/sensors/#"]
         assert stored_qos == 0
 
     def test_reconnect_resubscribes_with_original_qos(self):
         """_on_connect must forward the stored QoS, not default to QoS 0."""
+        def cb(topic, payload): pass
         client = self._make_client()
-        cb = lambda topic, payload: None
         client.subscribe("home/sensors/#", cb, qos=2)
 
         mock_paho = MagicMock()
@@ -58,9 +59,9 @@ class TestSubscribeStoresQoS:
         mock_paho.subscribe.assert_called_once_with("home/sensors/#", qos=2)
 
     def test_reconnect_preserves_qos_for_multiple_subscriptions(self):
+        def cb1(t, p): pass
+        def cb2(t, p): pass
         client = self._make_client()
-        cb1 = lambda t, p: None
-        cb2 = lambda t, p: None
         client.subscribe("topic/a", cb1, qos=1)
         client.subscribe("topic/b", cb2, qos=0)
 
@@ -77,8 +78,8 @@ class TestSubscribeStoresQoS:
 
     def test_failed_reconnect_does_not_resubscribe(self):
         """A failed connection attempt must not trigger re-subscription."""
+        def cb(t, p): pass
         client = self._make_client()
-        cb = lambda t, p: None
         client.subscribe("home/#", cb, qos=1)
 
         mock_paho = MagicMock()
@@ -94,7 +95,8 @@ class TestSubscribeStoresQoS:
         """_on_message must still dispatch to the callback after the tuple refactor."""
         client = self._make_client()
         received = []
-        client.subscribe("home/sensors/#", lambda t, p: received.append((t, p)), qos=1)
+        def collect(t, p): received.append((t, p))
+        client.subscribe("home/sensors/#", collect, qos=1)
 
         mock_msg = MagicMock()
         mock_msg.topic = "home/sensors/climate/bme280"
@@ -103,6 +105,56 @@ class TestSubscribeStoresQoS:
 
         assert len(received) == 1
         assert received[0][0] == "home/sensors/climate/bme280"
+
+
+# ---------------------------------------------------------------------------
+# configure_logging replaces existing handlers (not a basicConfig no-op)
+# ---------------------------------------------------------------------------
+
+
+class TestConfigureLogging:
+    def setup_method(self):
+        # Capture root logger state before each test
+        self._original_handlers = logging.root.handlers[:]
+        self._original_level = logging.root.level
+
+    def teardown_method(self):
+        # Restore root logger so other tests are unaffected
+        logging.root.handlers.clear()
+        for h in self._original_handlers:
+            logging.root.addHandler(h)
+        logging.root.setLevel(self._original_level)
+
+    def test_installs_json_formatter_even_after_basicconfig(self):
+        """configure_logging must replace handlers, not skip due to basicConfig no-op."""
+        import logging as _logging
+        # Simulate what main.py's bootstrap used to do
+        _logging.basicConfig(level=_logging.INFO, stream=sys.stderr)
+        assert len(_logging.root.handlers) >= 1
+
+        from common.mqtt import configure_logging, JsonFormatter
+        configure_logging(level="INFO", fmt="json")
+
+        assert len(_logging.root.handlers) == 1
+        assert isinstance(_logging.root.handlers[0].formatter, JsonFormatter)
+
+    def test_replaces_all_existing_handlers(self):
+        import logging as _logging
+        # Install two handlers first
+        _logging.root.addHandler(_logging.StreamHandler())
+        _logging.root.addHandler(_logging.StreamHandler())
+        assert len(_logging.root.handlers) >= 2
+
+        from common.mqtt import configure_logging
+        configure_logging(level="DEBUG", fmt="json")
+
+        assert len(_logging.root.handlers) == 1
+        assert _logging.root.level == _logging.DEBUG
+
+    def test_text_format_has_no_json_formatter(self):
+        from common.mqtt import configure_logging, JsonFormatter
+        configure_logging(level="INFO", fmt="text")
+        assert not isinstance(logging.root.handlers[0].formatter, JsonFormatter)
 
 
 # ---------------------------------------------------------------------------

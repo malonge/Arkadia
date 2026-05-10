@@ -7,7 +7,6 @@ from pydantic import ValidationError
 
 from common.models import (
     _normalise_to_utc,
-    _UTCTimestampMixin,
     AudioPayload,
     AudioReadings,
     BME280Payload,

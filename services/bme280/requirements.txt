@@ -1,0 +1,4 @@
+# Hardware abstraction layer for CircuitPython on Raspberry Pi
+adafruit-blinka
+# BME280 temperature / humidity / pressure sensor driver
+adafruit-circuitpython-bme280

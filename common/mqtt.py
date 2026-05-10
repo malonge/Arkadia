@@ -48,11 +48,19 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
-    """Configure the root logger with structured JSON or plain-text output."""
+    """Configure the root logger with structured JSON or plain-text output.
+
+    Explicitly replaces all existing handlers on the root logger so that this
+    function is not a no-op when called after :func:`logging.basicConfig` (or
+    any other logging setup) has already installed handlers.
+    """
     handler = logging.StreamHandler()
     if fmt == "json":
         handler.setFormatter(JsonFormatter())
-    logging.basicConfig(level=level.upper(), handlers=[handler])
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(level.upper())
 
 
 # ---------------------------------------------------------------------------

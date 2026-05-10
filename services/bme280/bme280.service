@@ -1,0 +1,59 @@
+[Unit]
+Description=Arkadia BME280 Climate Sensor Service
+Documentation=https://github.com/malonge/Arkadia
+After=mosquitto.service
+Requires=mosquitto.service
+# Rate-limit restarts: no more than 5 restarts in 60 s.
+# Must be in [Unit] (not [Service]) on systemd 229+; in [Service] the keys
+# are silently ignored as "Unknown key name".
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Change 'pi' to your actual username.
+User=pi
+Group=i2c
+
+# /etc/home-monitor.env must exist and define ARKADIA_ROOT — the absolute
+# path to this repository on the target machine.  Example:
+#   ARKADIA_ROOT=/home/pi/Projects/Arkadia
+EnvironmentFile=/etc/home-monitor.env
+
+# ExecStart uses /bin/bash as the executable (always an absolute path that
+# systemd can validate at parse time).  Bash then inherits the environment
+# that systemd loaded from EnvironmentFile — including ARKADIA_ROOT — and
+# expands it inside the double-quoted exec string.  This sidesteps the
+# systemd limitation that env vars from EnvironmentFile are NOT expanded
+# when systemd itself validates the ExecStart executable path.
+ExecStart=/bin/bash -c \
+  'exec "${ARKADIA_ROOT}/services/bme280/.venv/bin/python" \
+        "${ARKADIA_ROOT}/services/bme280/main.py"'
+
+Restart=on-failure
+RestartSec=5
+# Allow up to 15 s for a clean shutdown (covers the worst-case poll cycle).
+TimeoutStopSec=15
+
+# Create /run/bme280 owned by the service user before starting.
+# This gives lgpio (the GPIO backend used by adafruit-blinka on Pi 5) a
+# writable directory for its named-pipe notification files (.lgd-nfy*).
+# Without this, lgpio tries to create those files in the default CWD (/),
+# which is read-only under ProtectSystem=full.
+RuntimeDirectory=bme280
+WorkingDirectory=/run/bme280
+
+# Log via journald.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bme280
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+# 'full' makes /usr, /boot, /etc read-only; /dev (I2C) remains accessible.
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
