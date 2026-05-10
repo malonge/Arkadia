@@ -1,0 +1,37 @@
+[Unit]
+Description=Arkadia BME280 Climate Sensor Service
+Documentation=https://github.com/malonge/Arkadia
+After=mosquitto.service
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+User=pi
+Group=i2c
+WorkingDirectory=/home/pi/Arkadia/services/bme280
+ExecStart=/home/pi/Arkadia/services/bme280/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=5
+# Rate-limit restarts: no more than 5 restarts in 60 s.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+# Allow up to 15 s for a clean shutdown (covers the worst-case poll cycle).
+TimeoutStopSec=15
+
+# Environment — secrets and overrides live outside the repo.
+# The leading '-' makes the file optional so the service starts without it.
+EnvironmentFile=-/etc/home-monitor.env
+
+# Log via journald.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bme280
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+# 'full' makes /usr, /boot, /etc read-only; /dev (I2C) remains accessible.
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
