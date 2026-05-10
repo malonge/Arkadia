@@ -105,13 +105,21 @@ def load_config(
 ) -> dict[str, Any]:
     """Load and merge global config with a service-local config file.
 
-    The global config is loaded first; the local config is then deep-merged
-    on top of it so that local values take precedence.  Returns the raw merged
-    dict; callers are responsible for constructing typed objects from it.
+    The global config is loaded first and validated as a :class:`GlobalConfig`
+    (so invalid ``[broker]`` or ``[logging]`` values in the *global* file are
+    caught immediately).  The local config is then deep-merged on top, with
+    local values taking precedence.
 
-    Raises ``FileNotFoundError`` if *local_path* does not exist.
-    Raises ``ValueError`` (from Pydantic) if validation of shared sections
-    fails.
+    The merged result is returned as a raw ``dict``; callers are responsible
+    for constructing and validating any typed objects they need.  In particular,
+    if the local file overrides ``[broker]`` or ``[logging]`` keys, those
+    overrides are **not** re-validated here.
+
+    Raises:
+        FileNotFoundError: if *local_path* does not exist.
+        pydantic.ValidationError: if the *global* file's ``[broker]`` or
+            ``[logging]`` sections fail validation.
+        tomllib.TOMLDecodeError: if either TOML file has a syntax error.
     """
     local_path = Path(local_path)
     if not local_path.exists():

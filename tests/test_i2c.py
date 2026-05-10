@@ -72,3 +72,15 @@ class TestI2CBaseContextManager:
             assert base._address == 0x76
         # close() should be a no-op when _i2c is None
         assert base._i2c is None
+
+
+class TestI2CBaseAttributes:
+    def test_no_device_attribute(self):
+        """_device was removed as unused dead code; it must not exist on base."""
+        base = I2CBase(address=0x76)
+        assert not hasattr(base, "_device"), "_device is dead code and was removed"
+
+    def test_i2c_starts_as_none(self):
+        """_i2c must be None until _init_hardware() is called."""
+        base = I2CBase(address=0x76)
+        assert base._i2c is None

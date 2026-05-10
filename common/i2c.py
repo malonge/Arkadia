@@ -40,14 +40,13 @@ class I2CBase:
         self._bus = bus
         self._address = address
         self._i2c: Any = None
-        self._device: Any = None
 
         self._validate_address(address)
         logger.info(
-            "I2C bus %d address 0x%02X initialised",
-            bus,
+            "I2C address 0x%02X validated (bus %d); hardware init is deferred until first use",
             address,
-            extra={"event": "i2c_init"},
+            bus,
+            extra={"event": "i2c_address_validated"},
         )
 
     # ------------------------------------------------------------------
@@ -103,9 +102,10 @@ class I2CBase:
                 self._i2c.deinit()
             except Exception:
                 logger.exception("Error closing I2C bus", extra={"event": "i2c_close_error"})
+            else:
+                logger.info("I2C bus closed", extra={"event": "i2c_bus_close"})
             finally:
                 self._i2c = None
-                logger.info("I2C bus closed", extra={"event": "i2c_bus_close"})
 
     def __enter__(self) -> "I2CBase":
         return self

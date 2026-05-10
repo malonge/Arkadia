@@ -106,6 +106,33 @@ class TestSubscribeStoresQoS:
 
 
 # ---------------------------------------------------------------------------
+# publish() raises RuntimeError when not connected
+# ---------------------------------------------------------------------------
+
+
+class TestPublishConnectedGuard:
+    def test_publish_raises_when_disconnected(self):
+        client = MQTTClient(client_id="test-client", broker_host="localhost")
+        assert not client.is_connected
+        with pytest.raises(RuntimeError, match="not connected"):
+            client.publish("home/sensors/test", b"payload")
+
+    def test_publish_allowed_when_connected(self):
+        client = MQTTClient(client_id="test-client", broker_host="localhost")
+        client._connected = True
+
+        mock_result = MagicMock()
+        mock_result.wait_for_publish = MagicMock()
+        client._client = MagicMock()
+        client._client.publish.return_value = mock_result
+
+        client.publish("home/sensors/test", b"payload", qos=1, retain=True)
+        client._client.publish.assert_called_once_with(
+            "home/sensors/test", payload=b"payload", qos=1, retain=True
+        )
+
+
+# ---------------------------------------------------------------------------
 # Bug 4: JsonFormatter.formatTime must produce UTC timestamps
 # ---------------------------------------------------------------------------
 

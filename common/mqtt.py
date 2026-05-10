@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -187,7 +186,14 @@ class MQTTClient:
     # ------------------------------------------------------------------
 
     def connect(self) -> None:
-        """Connect to the broker (blocking until the connection is accepted)."""
+        """Initiate a connection to the broker.
+
+        Opens the TCP socket and sends the MQTT ``CONNECT`` packet, then
+        returns immediately.  The ``CONNACK`` response is processed
+        asynchronously; ``is_connected`` will be ``False`` until
+        ``loop_start()`` is running and the broker acknowledges the
+        connection.
+        """
         logger.info(
             "Connecting to %s:%s",
             self._broker_host,
@@ -225,8 +231,12 @@ class MQTTClient:
     ) -> None:
         """Publish a message to *topic*.
 
-        Raises ``RuntimeError`` if the client is not connected.
+        Raises ``RuntimeError`` if the client is not currently connected to
+        the broker.  Callers should call ``connect()`` and ``loop_start()``
+        before publishing.
         """
+        if not self._connected:
+            raise RuntimeError("Cannot publish: not connected to broker")
         result = self._client.publish(topic, payload=payload, qos=qos, retain=retain)
         result.wait_for_publish(timeout=5)
         logger.debug(
