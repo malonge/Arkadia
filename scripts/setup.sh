@@ -63,9 +63,11 @@ enable_service() {
 
     # Give the broker a moment to come up before reporting status.
     sleep 1
-    systemctl is-active --quiet mosquitto \
-        && info "mosquitto.service is active." \
-        || die "mosquitto.service failed to start. Check: journalctl -u mosquitto -n 50"
+    if systemctl is-active --quiet mosquitto; then
+        info "mosquitto.service is active."
+    else
+        die "mosquitto.service failed to start. Check: journalctl -u mosquitto -n 50"
+    fi
 }
 
 # ---------------------------------------------------------------------------
