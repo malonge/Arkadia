@@ -77,6 +77,37 @@ sudo bash scripts/setup.sh   # Install system packages and create virtualenvs
 sudo bash scripts/deploy.sh  # Install and start systemd services
 ```
 
+### Mosquitto smoke test
+
+After running `setup.sh`, verify the broker with a publish/subscribe round-trip:
+
+```bash
+# Terminal 1 — subscribe
+mosquitto_sub -h 127.0.0.1 -t 'test/#' -v
+
+# Terminal 2 — publish
+mosquitto_pub -h 127.0.0.1 -t 'test/hello' -m 'world'
+```
+
+Expected output in terminal 1:
+
+```
+test/hello world
+```
+
+Verify that connections from outside localhost are refused (replace `<pi-ip>` with the Pi's LAN address):
+
+```bash
+mosquitto_pub -h <pi-ip> -t 'test/hello' -m 'world'
+# Expected: Connection refused
+```
+
+View broker logs:
+
+```bash
+journalctl -u mosquitto -f
+```
+
 ---
 
 ## Configuration
