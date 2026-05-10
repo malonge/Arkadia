@@ -32,7 +32,12 @@ arkadia/
 │   │   ├── config.toml        # Sensor and MQTT settings
 │   │   ├── bme280.service     # systemd unit file
 │   │   └── requirements.txt
-│   ├── scd40/                 # CO₂ service (pending)
+│   ├── scd40/
+│   │   ├── sensor.py          # SCD40 driver (wraps adafruit-circuitpython-scd4x)
+│   │   ├── main.py            # Polling loop + MQTT publish
+│   │   ├── config.toml        # Sensor and MQTT settings
+│   │   ├── scd40.service      # systemd unit file
+│   │   └── requirements.txt
 │   ├── audio/                 # Ambient sound service (pending)
 │   └── api/                   # REST API service (pending)
 ├── config/
@@ -210,11 +215,43 @@ mosquitto_sub -h 127.0.0.1 -t 'home/sensors/climate/bme280' -v
 
 ## Sensors
 
-| Sensor  | Interface | Topic                         | Measurements                        |
-|---------|-----------|-------------------------------|-------------------------------------|
-| BME280  | I2C       | `home/sensors/climate/bme280` | Temperature, humidity, pressure     |
-| SCD40   | I2C       | `home/sensors/air/scd40`      | CO₂                                 |
-| INMP441 | I2S       | `home/sensors/audio/inmp441`  | Ambient sound (RMS / dBFS)          |
+| Sensor  | Interface | Topic                         | Measurements                        | Status  |
+|---------|-----------|-------------------------------|-------------------------------------|---------|
+| BME280  | I2C       | `home/sensors/climate/bme280` | Temperature, humidity, pressure     | ✅ done |
+| SCD40   | I2C       | `home/sensors/air/scd40`      | CO₂, temperature, humidity          | ✅ done |
+| INMP441 | I2S       | `home/sensors/audio/inmp441`  | Ambient sound (RMS / dBFS)          | pending |
+
+### SCD40 deployment
+
+The SCD40 follows the same deployment steps as the BME280 (see above).
+Key differences:
+
+- **Fixed I2C address:** `0x62` — no SDO pin, no config needed.
+- **Measurement cycle:** The SCD40 produces a new reading every 5 seconds
+  internally.  `read()` blocks until `data_ready` is `True`; collecting 3
+  samples therefore takes ~15 seconds.
+- **Virtualenv setup:**
+  ```bash
+  cd services/scd40
+  python3 -m venv .venv
+  .venv/bin/pip install -e ../..
+  .venv/bin/pip install -r requirements.txt
+  ```
+- **Manual test:**
+  ```bash
+  .venv/bin/python main.py
+  # First reading appears after ~15 s (3 × 5 s cycles)
+  mosquitto_sub -h 127.0.0.1 -t 'home/sensors/air/scd40' -v
+  ```
+- **Systemd install:**
+  ```bash
+  sudo cp services/scd40/scd40.service /etc/systemd/system/
+  sudo sed -i "s/^User=pi$/User=$(whoami)/" /etc/systemd/system/scd40.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable scd40
+  sudo systemctl start scd40
+  journalctl -u scd40 -f
+  ```
 
 ---
 

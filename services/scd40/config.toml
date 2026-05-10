@@ -1,0 +1,25 @@
+# SCD40 service configuration.
+# Global broker and logging defaults are loaded from config/global.toml.
+
+[sensor]
+# I2C bus number. On Raspberry Pi, bus 1 is the standard 40-pin header bus.
+i2c_bus = 1
+
+# The SCD40 has a single fixed I2C address: 0x62.
+i2c_address = 0x62
+
+# Number of raw samples to collect per cycle. Median is taken.
+# Each sample takes ~5 s (the SCD40's internal measurement cycle),
+# so 3 samples = ~15 s of collection time per cycle.
+sample_count = 3
+
+# Time between successive publish cycles (seconds).
+# The collection of 3 samples takes ~15 s, so an interval of 60 s
+# leaves ~45 s of sleep time between cycles.
+interval_seconds = 60
+
+[mqtt]
+topic = "home/sensors/air/scd40"
+client_id = "scd40-service"
+qos = 1
+retain = true

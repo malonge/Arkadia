@@ -1,0 +1,4 @@
+# Hardware abstraction layer for CircuitPython on Raspberry Pi
+adafruit-blinka
+# SCD40 CO2 / temperature / humidity sensor driver
+adafruit-circuitpython-scd4x

@@ -1,0 +1,46 @@
+[Unit]
+Description=Arkadia SCD40 CO₂ Sensor Service
+Documentation=https://github.com/malonge/Arkadia
+After=mosquitto.service
+Requires=mosquitto.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Change 'pi' to your actual username.
+User=pi
+Group=i2c
+
+# /etc/home-monitor.env must define ARKADIA_ROOT.
+EnvironmentFile=/etc/home-monitor.env
+
+# /bin/bash resolves at parse time; ${ARKADIA_ROOT} is expanded by bash
+# at runtime from the environment loaded via EnvironmentFile.
+ExecStart=/bin/bash -c \
+  'exec "${ARKADIA_ROOT}/services/scd40/.venv/bin/python" \
+        "${ARKADIA_ROOT}/services/scd40/main.py"'
+
+Restart=on-failure
+RestartSec=5
+# 3 samples × up to 5 s each + overhead = allow up to 30 s for clean shutdown.
+TimeoutStopSec=30
+
+# lgpio (adafruit-blinka on Pi 5) creates notification pipes (.lgd-nfy*)
+# in the working directory.  RuntimeDirectory creates /run/scd40 owned by
+# the service user; WorkingDirectory sets the CWD there so lgpio has a
+# writable location.
+RuntimeDirectory=scd40
+WorkingDirectory=/run/scd40
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scd40
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
