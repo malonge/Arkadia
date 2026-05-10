@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any
 
 import paho.mqtt.client as mqtt
@@ -19,11 +20,24 @@ logger = logging.getLogger(__name__)
 
 
 class JsonFormatter(logging.Formatter):
-    """Emit log records as single-line JSON objects."""
+    """Emit log records as single-line JSON objects with UTC timestamps."""
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        """Return the log record creation time as a UTC ISO 8601 string.
+
+        Overrides the default implementation, which uses ``time.localtime``
+        (the process's local timezone).  The ``Z`` suffix in ISO 8601 denotes
+        UTC; using localtime would produce a misleading timestamp on any host
+        not configured to UTC.
+        """
+        dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": self.formatTime(record, datefmt="%Y-%m-%dT%H:%M:%SZ"),
+            "timestamp": self.formatTime(record),
             "level": record.levelname,
             "service": record.name,
             "event": getattr(record, "event", "log"),
@@ -97,7 +111,7 @@ class MQTTClient:
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message
 
-        self._message_callbacks: dict[str, Callable[[str, bytes], None]] = {}
+        self._message_callbacks: dict[str, tuple[Callable[[str, bytes], None], int]] = {}
 
         if lwt:
             self._client.will_set(
@@ -128,8 +142,8 @@ class MQTTClient:
             return
         self._connected = True
         logger.info("Connected to broker", extra={"event": "mqtt_connected"})
-        for topic in self._message_callbacks:
-            self._client.subscribe(topic)
+        for topic, (_, qos) in self._message_callbacks.items():
+            self._client.subscribe(topic, qos=qos)
 
     def _on_disconnect(
         self,
@@ -157,7 +171,7 @@ class MQTTClient:
         message: mqtt.MQTTMessage,
     ) -> None:
         topic = message.topic
-        for pattern, cb in self._message_callbacks.items():
+        for pattern, (cb, _) in self._message_callbacks.items():
             if mqtt.topic_matches_sub(pattern, topic):
                 try:
                     cb(topic, message.payload)
@@ -232,7 +246,7 @@ class MQTTClient:
         The callback signature is ``(topic: str, payload: bytes) -> None``.
         Subscriptions made before ``connect()`` are re-applied on reconnect.
         """
-        self._message_callbacks[topic] = callback
+        self._message_callbacks[topic] = (callback, qos)
         if self._connected:
             self._client.subscribe(topic, qos=qos)
         logger.debug("Subscribed to %s", topic, extra={"event": "mqtt_subscribe"})

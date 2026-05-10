@@ -1,9 +1,42 @@
 """Pydantic models for all sensor payloads and the standard envelope."""
 
 from datetime import datetime, timezone
-from typing import Annotated, Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
+
+
+# ---------------------------------------------------------------------------
+# UTC timestamp helper
+# ---------------------------------------------------------------------------
+
+
+def _normalise_to_utc(v: datetime) -> datetime:
+    """Normalise *v* to an aware UTC datetime.
+
+    - Naive datetimes are assumed to already be in UTC and have ``tzinfo``
+      attached without conversion.
+    - Aware datetimes are converted to UTC regardless of their original zone.
+    """
+    if v.tzinfo is None:
+        return v.replace(tzinfo=timezone.utc)
+    return v.astimezone(timezone.utc)
+
+
+class _UTCTimestampMixin(BaseModel):
+    """Mixin that applies :func:`_normalise_to_utc` to the ``timestamp`` field.
+
+    Inherit from this instead of repeating the ``ensure_utc`` validator in
+    every payload class.  Pydantic v2 picks up validators defined on any class
+    in the MRO, so the validator is active in all subclasses automatically.
+    """
+
+    timestamp: datetime
+
+    @field_validator("timestamp")
+    @classmethod
+    def ensure_utc(cls, v: datetime) -> datetime:
+        return _normalise_to_utc(v)
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +91,7 @@ class AudioReadings(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class SensorPayload(BaseModel):
+class SensorPayload(_UTCTimestampMixin):
     """Standard envelope wrapping any sensor's readings."""
 
     schema_version: Literal[1] = 1
@@ -68,23 +101,13 @@ class SensorPayload(BaseModel):
     meta: Meta
     diagnostics: Diagnostics | None = None
 
-    @field_validator("timestamp")
-    @classmethod
-    def ensure_utc(cls, v: datetime) -> datetime:
-        """Normalise naive datetimes to UTC; reject non-UTC aware datetimes."""
-        if v.tzinfo is None:
-            return v.replace(tzinfo=timezone.utc)
-        return v.astimezone(timezone.utc)
-
-    model_config = {}
-
 
 # ---------------------------------------------------------------------------
 # Sensor-specific typed payloads (sensor_id is fixed per type)
 # ---------------------------------------------------------------------------
 
 
-class BME280Payload(BaseModel):
+class BME280Payload(_UTCTimestampMixin):
     """Fully-typed payload for the BME280 climate sensor."""
 
     schema_version: Literal[1] = 1
@@ -94,15 +117,8 @@ class BME280Payload(BaseModel):
     meta: Meta
     diagnostics: Diagnostics | None = None
 
-    @field_validator("timestamp")
-    @classmethod
-    def ensure_utc(cls, v: datetime) -> datetime:
-        if v.tzinfo is None:
-            return v.replace(tzinfo=timezone.utc)
-        return v.astimezone(timezone.utc)
 
-
-class SCD40Payload(BaseModel):
+class SCD40Payload(_UTCTimestampMixin):
     """Fully-typed payload for the SCD40 CO₂ sensor."""
 
     schema_version: Literal[1] = 1
@@ -112,15 +128,8 @@ class SCD40Payload(BaseModel):
     meta: Meta
     diagnostics: Diagnostics | None = None
 
-    @field_validator("timestamp")
-    @classmethod
-    def ensure_utc(cls, v: datetime) -> datetime:
-        if v.tzinfo is None:
-            return v.replace(tzinfo=timezone.utc)
-        return v.astimezone(timezone.utc)
 
-
-class AudioPayload(BaseModel):
+class AudioPayload(_UTCTimestampMixin):
     """Fully-typed payload for the INMP441 audio sensor."""
 
     schema_version: Literal[1] = 1
@@ -129,10 +138,3 @@ class AudioPayload(BaseModel):
     readings: AudioReadings
     meta: Meta
     diagnostics: Diagnostics | None = None
-
-    @field_validator("timestamp")
-    @classmethod
-    def ensure_utc(cls, v: datetime) -> datetime:
-        if v.tzinfo is None:
-            return v.replace(tzinfo=timezone.utc)
-        return v.astimezone(timezone.utc)

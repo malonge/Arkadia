@@ -25,7 +25,7 @@ class I2CBase:
     hardware-specific dependencies installed.
     """
 
-    def __init__(self, bus: int = 1, address: int = 0x00) -> None:
+    def __init__(self, bus: int = 1, *, address: int) -> None:
         """Initialise the I2C bus and verify the device is present.
 
         Parameters
@@ -33,7 +33,9 @@ class I2CBase:
         bus:
             I2C bus number (e.g. ``1`` for ``/dev/i2c-1``).
         address:
-            7-bit I2C device address.
+            7-bit I2C device address (keyword-only, required).  There is no
+            sensible generic default — callers must always supply the device's
+            actual address.  Valid range: ``0x08``–``0x77``.
         """
         self._bus = bus
         self._address = address
