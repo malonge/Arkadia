@@ -3,6 +3,11 @@ Description=Arkadia BME280 Climate Sensor Service
 Documentation=https://github.com/malonge/Arkadia
 After=mosquitto.service
 Requires=mosquitto.service
+# Rate-limit restarts: no more than 5 restarts in 60 s.
+# Must be in [Unit] (not [Service]) on systemd 229+; in [Service] the keys
+# are silently ignored as "Unknown key name".
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -12,9 +17,6 @@ WorkingDirectory=/home/pi/Arkadia/services/bme280
 ExecStart=/home/pi/Arkadia/services/bme280/.venv/bin/python main.py
 Restart=on-failure
 RestartSec=5
-# Rate-limit restarts: no more than 5 restarts in 60 s.
-StartLimitIntervalSec=60
-StartLimitBurst=5
 # Allow up to 15 s for a clean shutdown (covers the worst-case poll cycle).
 TimeoutStopSec=15
 

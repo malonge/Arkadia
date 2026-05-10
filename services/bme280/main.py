@@ -40,14 +40,18 @@ def _handle_signal(signum: int, frame: object) -> None:
 
 
 def _wait_for_connect(client: MQTTClient, timeout: float = 15.0) -> bool:
-    """Block until the client is connected or *timeout* seconds elapse."""
+    """Block until the client is connected or *timeout* seconds elapse.
+
+    Uses ``_stop.wait`` so that a shutdown signal interrupts the wait
+    immediately rather than after the next 0.1 s tick.
+    """
     deadline = time.monotonic() + timeout
     while not client.is_connected:
         if time.monotonic() >= deadline:
             return False
         if _stop.is_set():
             return False
-        time.sleep(0.1)
+        _stop.wait(timeout=0.1)
     return True
 
 
@@ -55,11 +59,10 @@ def main() -> None:
     # ----------------------------------------------------------------
     # Logging bootstrap (plain text until config is loaded)
     # ----------------------------------------------------------------
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(levelname)s %(name)s %(message)s",
-        stream=sys.stderr,
-    )
+    # Use configure_logging (not logging.basicConfig) so the call after
+    # config is loaded actually replaces the handler with the JSON formatter
+    # rather than being silently ignored.
+    configure_logging(level="INFO", fmt="text")
 
     # ----------------------------------------------------------------
     # Configuration

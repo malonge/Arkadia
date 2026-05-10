@@ -2,6 +2,7 @@
 
 import json
 import logging
+import sys
 import time
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch, call
@@ -104,6 +105,56 @@ class TestSubscribeStoresQoS:
 
         assert len(received) == 1
         assert received[0][0] == "home/sensors/climate/bme280"
+
+
+# ---------------------------------------------------------------------------
+# configure_logging replaces existing handlers (not a basicConfig no-op)
+# ---------------------------------------------------------------------------
+
+
+class TestConfigureLogging:
+    def setup_method(self):
+        # Capture root logger state before each test
+        self._original_handlers = logging.root.handlers[:]
+        self._original_level = logging.root.level
+
+    def teardown_method(self):
+        # Restore root logger so other tests are unaffected
+        logging.root.handlers.clear()
+        for h in self._original_handlers:
+            logging.root.addHandler(h)
+        logging.root.setLevel(self._original_level)
+
+    def test_installs_json_formatter_even_after_basicconfig(self):
+        """configure_logging must replace handlers, not skip due to basicConfig no-op."""
+        import logging as _logging
+        # Simulate what main.py's bootstrap used to do
+        _logging.basicConfig(level=_logging.INFO, stream=sys.stderr)
+        assert len(_logging.root.handlers) >= 1
+
+        from common.mqtt import configure_logging, JsonFormatter
+        configure_logging(level="INFO", fmt="json")
+
+        assert len(_logging.root.handlers) == 1
+        assert isinstance(_logging.root.handlers[0].formatter, JsonFormatter)
+
+    def test_replaces_all_existing_handlers(self):
+        import logging as _logging
+        # Install two handlers first
+        _logging.root.addHandler(_logging.StreamHandler())
+        _logging.root.addHandler(_logging.StreamHandler())
+        assert len(_logging.root.handlers) >= 2
+
+        from common.mqtt import configure_logging
+        configure_logging(level="DEBUG", fmt="json")
+
+        assert len(_logging.root.handlers) == 1
+        assert _logging.root.level == _logging.DEBUG
+
+    def test_text_format_has_no_json_formatter(self):
+        from common.mqtt import configure_logging, JsonFormatter
+        configure_logging(level="INFO", fmt="text")
+        assert not isinstance(logging.root.handlers[0].formatter, JsonFormatter)
 
 
 # ---------------------------------------------------------------------------

@@ -57,6 +57,15 @@ class BME280Sensor(I2CBase):
         except I2CError:
             raise
         except Exception as exc:
+            # If the I2C bus was opened but the BME280 device init failed,
+            # close the bus now so that a subsequent _init_hardware() call
+            # does not open a second bus on top of the leaked first one.
+            if self._i2c is not None:
+                try:
+                    self._i2c.deinit()
+                except Exception:
+                    pass
+                self._i2c = None
             raise I2CError(
                 f"Failed to initialise BME280 at 0x{self._address:02X} on bus {self._bus}: {exc}"
             ) from exc

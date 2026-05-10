@@ -199,6 +199,43 @@ class TestBME280SensorRead:
         s.close()
         assert s._bme280 is None
 
+    def test_partial_init_failure_does_not_leak_i2c_bus(self):
+        """If BME280 device init fails after I2C bus opens, the bus must be closed.
+
+        Without the fix, _i2c would be left set on the first failure, and a
+        subsequent call to _init_hardware() (via read()) would open a second
+        I2C bus without closing the first.
+        """
+        fake_board, fake_busio, fake_i2c = _make_fake_board_busio()
+        # Make Adafruit_BME280_I2C fail so only the bus is opened
+        fail_bme280 = types.ModuleType("adafruit_bme280.basic")
+        fail_bme280.Adafruit_BME280_I2C = MagicMock(side_effect=ValueError("no device"))
+        fail_top = types.ModuleType("adafruit_bme280")
+        fail_top.basic = fail_bme280
+        sys.modules.update({
+            "board": fake_board, "busio": fake_busio,
+            "adafruit_bme280": fail_top, "adafruit_bme280.basic": fail_bme280,
+        })
+
+        from sensor import BME280Sensor
+        from common.i2c import I2CError
+
+        s = BME280Sensor(address=0x76)
+
+        # First attempt fails
+        with pytest.raises(I2CError):
+            s._init_hardware()
+
+        assert s._i2c is None, "_i2c must be cleaned up after partial failure"
+        assert fake_i2c.deinit.call_count == 1, "deinit must be called on the leaked bus"
+
+        # Second attempt must not open a second bus on top of the first
+        with pytest.raises(I2CError):
+            s._init_hardware()
+
+        assert fake_busio.I2C.call_count == 2, "two attempts = two bus opens"
+        assert fake_i2c.deinit.call_count == 2, "second bus must also be cleaned up"
+
 
 # ---------------------------------------------------------------------------
 # Payload model validation (core correctness check for real Pi data)
