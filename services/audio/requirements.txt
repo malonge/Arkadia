@@ -1,0 +1,4 @@
+# I2S microphone capture and audio stream management
+sounddevice
+# FFT computation, window functions, and array operations
+numpy

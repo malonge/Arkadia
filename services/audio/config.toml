@@ -1,0 +1,41 @@
+# Audio sensor service configuration.
+# Global broker and logging defaults are loaded from config/global.toml;
+# only service-specific values need to be set here.
+
+[sensor]
+# sounddevice input device index.
+# Run `python -m sounddevice` on the Pi to list available devices.
+# The INMP441 I2S microphone typically appears as device 0 when it is the
+# only audio input.
+device_index = 0
+
+# I2S capture sample rate in Hz.  The INMP441 supports up to 64 kHz;
+# 16 000 Hz is sufficient for voice and general environmental monitoring.
+sample_rate_hz = 16000
+
+# Number of samples per audio frame.
+# At 16 000 Hz, 800 samples = 50 ms per frame → effective rate of 20 Hz.
+# Increasing window_size improves FFT frequency resolution (Hz/bin =
+# sample_rate_hz / window_size) at the cost of higher per-frame latency.
+window_size = 800
+
+# Windowing function applied to each frame before FFT.
+# "hann" (von Hann) is the standard choice: good frequency selectivity
+# with moderate sidelobe suppression.
+window_function = "hann"
+
+# ISO 266 one-octave band centre frequencies (Hz) for equalizer display.
+# Each band spans [centre/√2, centre×√2).
+eq_bands_hz = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
+
+# How often (seconds) to publish the retained RMS summary payload.
+summary_interval_seconds = 5
+
+[mqtt]
+# High-frequency real-time stream: QoS 0, no retain.
+stream_topic = "home/sensors/audio/inmp441/stream"
+
+# Periodic summary: QoS 1, retain=true (set in main.py).
+summary_topic = "home/sensors/audio/inmp441"
+
+client_id = "audio-service"
