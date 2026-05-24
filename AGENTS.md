@@ -39,3 +39,13 @@ Arkadia is a home environment monitoring system designed for Raspberry Pi 5. It 
 ### Hardware dependencies
 
 - Sensor services (BME280, SCD40, Audio) require Raspberry Pi hardware and cannot run in the cloud VM. Unit tests for `common/` and the API service should work without hardware.
+
+---
+
+## Skills
+
+Skills are SOPs for specific tasks. Read the relevant skill file before performing the task it covers.
+
+| Skill file | Use when |
+|------------|----------|
+| `skills/pi-deployment.md` | Deploying or updating any service on the Raspberry Pi, debugging a failing systemd unit, configuring I2C/I2S hardware, or troubleshooting the audio device |

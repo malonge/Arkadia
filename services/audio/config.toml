@@ -1,0 +1,14 @@
+[sensor]
+device = 0
+sample_rate_hz = 48000      # hardware requirement — 16000 is not supported
+channels = 2                # hardware is always stereo
+channel = 0                 # 0 = left (L/R pin tied to GND); 1 = right (L/R to 3V3)
+window_size = 2400          # 50 ms at 48000 Hz → still 20 Hz frame rate
+window_function = "hann"
+eq_bands_hz = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
+summary_interval_seconds = 5
+
+[mqtt]
+stream_topic  = "home/sensors/audio/inmp441/stream"
+summary_topic = "home/sensors/audio/inmp441"
+client_id     = "audio-service"

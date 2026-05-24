@@ -267,13 +267,39 @@ The service operates two concurrent publish modes:
 
 ### Frame Parameters
 
-| Parameter | Default | Description |
+The `googlevoicehat-soundcard` ALSA driver on Raspberry Pi 5 **requires** 48 000 Hz
+stereo capture — 16 000 Hz is not supported by this driver.  The INMP441 is a mono
+microphone; only one stereo channel carries signal (see `channel` below).
+
+| Parameter | Value | Description |
 |------|------|------|
-| `sample_rate_hz` | 16 000 | I2S capture rate |
-| `window_size` | 1 024 | Samples per frame (~64 ms of audio) |
-| `fft_size` | 1 024 | FFT length; bins span 0–8 000 Hz in ~15.6 Hz steps |
+| `device` | `0` | PortAudio device index — find with `python -m sounddevice` |
+| `sample_rate_hz` | 48 000 | Hardware requirement for `googlevoicehat-soundcard` |
+| `channels` | `2` | Driver always presents stereo |
+| `channel` | `0` | Stereo channel carrying mic signal: `0` = left (L/R=GND), `1` = right (L/R=3V3) |
+| `window_size` | 2 400 | Samples per frame (50 ms at 48 kHz → 20 Hz frame rate) |
+| `fft_size` | 2 400 | FFT length; bins span 0–24 000 Hz in 20 Hz steps |
 | `eq_bands_hz` | `[63, 125, 250, 500, 1000, 2000, 4000, 8000]` | ISO 266 octave centres |
 | `window_function` | `hann` | Applied before FFT to reduce spectral leakage |
+
+### Raspberry Pi 5 ALSA Setup
+
+The `googlevoicehat-soundcard` overlay must be loaded and an ALSA softvol layer
+configured before the service will start.  See `skills/pi-deployment.md` for the
+complete step-by-step procedure.  In brief:
+
+**`/boot/firmware/config.txt`** additions:
+```text
+dtparam=i2s=on
+dtoverlay=googlevoicehat-soundcard
+dtparam=audio=on
+dtoverlay=vc4-kms-v3d,noaudio
+```
+
+**`/etc/asound.conf`** — adds a software volume control layer (`mic_sv`) above the
+raw hardware device (`hw:0,0`).  The service uses `device = 0` (the hardware device
+index) rather than the `mic_sv` named device, because PortAudio/sounddevice cannot
+negotiate hardware parameters through the softvol layer.
 
 ### Polling Loop (Stream Mode)
 
@@ -409,8 +435,8 @@ Published to `home/sensors/audio/inmp441/stream` at 20 Hz.
   "sensor_id": "inmp441",
   "timestamp": "2026-05-08T14:23:01.050Z",
   "readings": {
-    "sample_rate_hz": 16000,
-    "window_size": 1024,
+    "sample_rate_hz": 48000,
+    "window_size": 2400,
     "waveform": [0.002, -0.005, 0.011, "...1024 values total..."],
     "fft_bins": {
       "frequencies_hz": [0.0, 15.625, 31.25, "...512 values total..."],

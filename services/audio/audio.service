@@ -1,0 +1,46 @@
+[Unit]
+Description=Arkadia Audio Sensor Service (INMP441 I2S Microphone)
+Documentation=https://github.com/malonge/Arkadia
+After=mosquitto.service
+Requires=mosquitto.service
+# Rate-limit restarts: no more than 5 restarts in 60 s.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Change 'pi' to your actual username.
+User=pi
+# The 'audio' group grants access to ALSA / sounddevice on Raspberry Pi OS.
+Group=audio
+
+# /etc/home-monitor.env must exist and define ARKADIA_ROOT — the absolute
+# path to this repository on the target machine.  Example:
+#   ARKADIA_ROOT=/home/pi/Projects/Arkadia
+EnvironmentFile=/etc/home-monitor.env
+
+# ExecStart uses /bin/bash so that the ARKADIA_ROOT variable from
+# EnvironmentFile can be expanded inside the quoted string.
+ExecStart=/bin/bash -c \
+  'exec "${ARKADIA_ROOT}/services/audio/.venv/bin/python" \
+        "${ARKADIA_ROOT}/services/audio/main.py"'
+
+Restart=on-failure
+RestartSec=5
+# Allow up to 5 s for a clean shutdown (covers the worst-case frame read).
+TimeoutStopSec=5
+
+# Log via journald.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=audio
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+# 'full' makes /usr, /boot, /etc read-only; /dev (I2S) remains accessible.
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
