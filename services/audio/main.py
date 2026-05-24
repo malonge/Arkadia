@@ -141,10 +141,20 @@ def main() -> None:
         )
     ]
 
+    # "device" accepts a string name (e.g. "mic_sv") or an integer index.
+    # Fall back to "device_index" for backwards compatibility.
+    raw_device = sensor_cfg.get("device", sensor_cfg.get("device_index", 0))
+    device: str | int | None = (
+        str(raw_device) if isinstance(raw_device, str) else
+        (None if raw_device is None else int(raw_device))
+    )
+
     sensor = AudioSensor(
-        device_index=sensor_cfg.get("device_index", 0),
-        sample_rate_hz=int(sensor_cfg.get("sample_rate_hz", 16000)),
-        window_size=int(sensor_cfg.get("window_size", 800)),
+        device=device,
+        sample_rate_hz=int(sensor_cfg.get("sample_rate_hz", 48000)),
+        channels=int(sensor_cfg.get("channels", 2)),
+        channel=int(sensor_cfg.get("channel", 0)),
+        window_size=int(sensor_cfg.get("window_size", 2400)),
         window_function=str(sensor_cfg.get("window_function", "hann")),
         eq_bands_hz=eq_bands_hz,
     )

@@ -11,6 +11,13 @@ The pure computation functions (``compute_stream_readings``,
 mocking by constructing numpy arrays of known content and verifying the
 results analytically.
 
+Hardware context
+----------------
+The INMP441 + googlevoicehat-soundcard driver always presents a *stereo*
+48 kHz stream.  ``AudioSensor`` reads both channels and extracts the one
+carrying signal (``channel=0`` for L/R=GND, ``channel=1`` for L/R=3V3).
+Tests that exercise the hardware path return stereo fake data accordingly.
+
 All tests are hardware-free and run on any platform with numpy available.
 """
 
@@ -59,8 +66,11 @@ def _activate_service_path() -> None:
 # Shared test fixtures
 # ---------------------------------------------------------------------------
 
-SAMPLE_RATE = 16000
-WINDOW_SIZE = 800
+# Match the real hardware config: 48 kHz stereo, 2400-sample window.
+SAMPLE_RATE = 48000
+WINDOW_SIZE = 2400
+CHANNELS = 2
+CHANNEL = 0   # left channel carries signal (L/R = GND)
 EQ_BANDS = [63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0]
 
 
@@ -75,9 +85,17 @@ def _make_window_and_freqs(size: int = WINDOW_SIZE, rate: int = SAMPLE_RATE):
 def _sine_wave(frequency_hz: float, amplitude: float = 0.5,
                n_samples: int = WINDOW_SIZE,
                sample_rate: int = SAMPLE_RATE) -> np.ndarray:
-    """Return a single-frequency float32 sine wave."""
+    """Return a single-frequency float32 sine wave (mono)."""
     t = np.arange(n_samples) / sample_rate
     return (amplitude * np.sin(2 * np.pi * frequency_hz * t)).astype(np.float32)
+
+
+def _stereo_from_mono(mono: np.ndarray, channel: int = CHANNEL,
+                      n_channels: int = CHANNELS) -> np.ndarray:
+    """Pack a mono array into a (n_samples, n_channels) stereo array."""
+    stereo = np.zeros((len(mono), n_channels), dtype=np.float32)
+    stereo[:, channel] = mono
+    return stereo
 
 
 # ---------------------------------------------------------------------------
@@ -90,17 +108,17 @@ class TestMakeWindow:
 
     def test_hann_shape(self):
         from sensor import make_window
-        w = make_window("hann", 800)
-        assert len(w) == 800
+        w = make_window("hann", WINDOW_SIZE)
+        assert len(w) == WINDOW_SIZE
 
     def test_hann_dtype(self):
         from sensor import make_window
-        w = make_window("hann", 800)
+        w = make_window("hann", WINDOW_SIZE)
         assert w.dtype == np.float32
 
     def test_hann_endpoints_near_zero(self):
         from sensor import make_window
-        w = make_window("hann", 800)
+        w = make_window("hann", WINDOW_SIZE)
         assert abs(w[0]) < 1e-6
         assert abs(w[-1]) < 1e-3
 
@@ -162,7 +180,7 @@ class TestComputeStreamReadings:
         np.testing.assert_allclose(rdg.waveform, wave, atol=1e-6)
 
     def test_fft_bins_length(self):
-        """rfft of N-point real signal → N/2+1 complex → N/2+1 bins."""
+        """rfft of N-point real signal → N/2+1 bins."""
         rdg = self._compute(_sine_wave(1000.0))
         expected_bins = WINDOW_SIZE // 2 + 1
         assert len(rdg.fft_bins.frequencies_hz) == expected_bins
@@ -179,10 +197,8 @@ class TestComputeStreamReadings:
         freq = 1000.0
         rdg = self._compute(_sine_wave(freq, amplitude=0.8))
         mags = np.array(rdg.fft_bins.magnitudes_db)
-        # Find the bin with maximum magnitude (ignore DC bin 0)
         peak_idx = np.argmax(mags[1:]) + 1
         peak_freq = rdg.fft_bins.frequencies_hz[peak_idx]
-        # Peak must be within one bin width of the target frequency.
         bin_width = SAMPLE_RATE / WINDOW_SIZE
         assert abs(peak_freq - freq) <= bin_width
 
@@ -197,7 +213,6 @@ class TestComputeStreamReadings:
         rdg = self._compute(_sine_wave(1000.0, amplitude=1.0))
         mags = np.array(rdg.fft_bins.magnitudes_db)
         peak_db = float(np.max(mags[1:]))
-        # With Hann window the peak is slightly below 0 dBFS due to windowing loss.
         assert -10.0 < peak_db <= 3.0
 
     def test_rms_amplitude_range(self):
@@ -292,23 +307,22 @@ class TestComputeSummaryRms:
 # AudioSensor hardware wrapper tests (sounddevice mocked)
 # ---------------------------------------------------------------------------
 
-def _make_fake_sounddevice(waveform: np.ndarray | None = None):
-    """Inject a fake sounddevice module into sys.modules."""
-    if waveform is None:
-        waveform = np.zeros(WINDOW_SIZE, dtype=np.float32)
+def _make_fake_sounddevice(mono_waveform: np.ndarray | None = None,
+                            n_channels: int = CHANNELS,
+                            signal_channel: int = CHANNEL):
+    """Inject a fake sounddevice module returning stereo data."""
+    if mono_waveform is None:
+        mono_waveform = np.zeros(WINDOW_SIZE, dtype=np.float32)
+
+    stereo = _stereo_from_mono(mono_waveform, channel=signal_channel,
+                                n_channels=n_channels)
 
     fake_sd = types.ModuleType("sounddevice")
-
     fake_stream = MagicMock()
-    # InputStream.read() returns (data, overflowed) where data is (N, channels)
-    fake_stream.read.return_value = (
-        waveform.reshape(-1, 1).astype(np.float32),
-        False,
-    )
+    fake_stream.read.return_value = (stereo, False)
     fake_stream.start = MagicMock()
     fake_stream.stop = MagicMock()
     fake_stream.close = MagicMock()
-
     fake_sd.InputStream = MagicMock(return_value=fake_stream)
 
     sys.modules["sounddevice"] = fake_sd
@@ -319,6 +333,21 @@ def _remove_fake_sounddevice():
     sys.modules.pop("sounddevice", None)
 
 
+def _default_sensor_kwargs(**overrides):
+    """Return default AudioSensor constructor kwargs (matching real config)."""
+    defaults = dict(
+        device="mic_sv",
+        sample_rate_hz=SAMPLE_RATE,
+        channels=CHANNELS,
+        channel=CHANNEL,
+        window_size=WINDOW_SIZE,
+        window_function="hann",
+        eq_bands_hz=EQ_BANDS,
+    )
+    defaults.update(overrides)
+    return defaults
+
+
 class TestAudioSensorConstruction:
     def setup_method(self):
         _activate_service_path()
@@ -327,37 +356,28 @@ class TestAudioSensorConstruction:
         """Creating AudioSensor must not import sounddevice."""
         _remove_fake_sounddevice()
         from sensor import AudioSensor
-        # sounddevice absent from sys.modules — construction must not raise.
-        s = AudioSensor(
-            device_index=0,
-            sample_rate_hz=SAMPLE_RATE,
-            window_size=WINDOW_SIZE,
-            window_function="hann",
-            eq_bands_hz=EQ_BANDS,
-        )
+        s = AudioSensor(**_default_sensor_kwargs())
         assert s._stream is None
 
     def test_window_precomputed(self):
         from sensor import AudioSensor
-        s = AudioSensor(
-            device_index=0,
-            sample_rate_hz=SAMPLE_RATE,
-            window_size=WINDOW_SIZE,
-            window_function="hann",
-            eq_bands_hz=EQ_BANDS,
-        )
+        s = AudioSensor(**_default_sensor_kwargs())
         assert len(s._window) == WINDOW_SIZE
 
     def test_freqs_precomputed(self):
         from sensor import AudioSensor
-        s = AudioSensor(
-            device_index=0,
-            sample_rate_hz=SAMPLE_RATE,
-            window_size=WINDOW_SIZE,
-            window_function="hann",
-            eq_bands_hz=EQ_BANDS,
-        )
+        s = AudioSensor(**_default_sensor_kwargs())
         assert len(s._freqs) == WINDOW_SIZE // 2 + 1
+
+    def test_string_device_stored(self):
+        from sensor import AudioSensor
+        s = AudioSensor(**_default_sensor_kwargs(device="mic_sv"))
+        assert s.device == "mic_sv"
+
+    def test_int_device_stored(self):
+        from sensor import AudioSensor
+        s = AudioSensor(**_default_sensor_kwargs(device=0))
+        assert s.device == 0
 
 
 class TestAudioSensorOpen:
@@ -372,13 +392,7 @@ class TestAudioSensorOpen:
     def test_open_starts_stream(self):
         fake_sd, fake_stream = _make_fake_sounddevice()
         from sensor import AudioSensor
-        s = AudioSensor(
-            device_index=0,
-            sample_rate_hz=SAMPLE_RATE,
-            window_size=WINDOW_SIZE,
-            window_function="hann",
-            eq_bands_hz=EQ_BANDS,
-        )
+        s = AudioSensor(**_default_sensor_kwargs())
         s.open()
         fake_sd.InputStream.assert_called_once()
         fake_stream.start.assert_called_once()
@@ -387,31 +401,18 @@ class TestAudioSensorOpen:
     def test_open_passes_correct_params(self):
         fake_sd, _ = _make_fake_sounddevice()
         from sensor import AudioSensor
-        s = AudioSensor(
-            device_index=2,
-            sample_rate_hz=SAMPLE_RATE,
-            window_size=WINDOW_SIZE,
-            window_function="hann",
-            eq_bands_hz=EQ_BANDS,
-        )
+        s = AudioSensor(**_default_sensor_kwargs(device="mic_sv"))
         s.open()
         call_kwargs = fake_sd.InputStream.call_args.kwargs
-        assert call_kwargs["device"] == 2
+        assert call_kwargs["device"] == "mic_sv"
         assert call_kwargs["samplerate"] == SAMPLE_RATE
         assert call_kwargs["blocksize"] == WINDOW_SIZE
-        assert call_kwargs["channels"] == 1
+        assert call_kwargs["channels"] == CHANNELS
         assert call_kwargs["dtype"] == "float32"
 
     def test_open_missing_sounddevice_raises_audio_error(self):
-        # sounddevice is absent from sys.modules — open() should raise AudioError.
         from sensor import AudioError, AudioSensor
-        s = AudioSensor(
-            device_index=0,
-            sample_rate_hz=SAMPLE_RATE,
-            window_size=WINDOW_SIZE,
-            window_function="hann",
-            eq_bands_hz=EQ_BANDS,
-        )
+        s = AudioSensor(**_default_sensor_kwargs())
         with pytest.raises(AudioError, match="sounddevice"):
             s.open()
 
@@ -420,13 +421,7 @@ class TestAudioSensorOpen:
         fake_sd.InputStream = MagicMock(side_effect=OSError("no device"))
         sys.modules["sounddevice"] = fake_sd
         from sensor import AudioError, AudioSensor
-        s = AudioSensor(
-            device_index=99,
-            sample_rate_hz=SAMPLE_RATE,
-            window_size=WINDOW_SIZE,
-            window_function="hann",
-            eq_bands_hz=EQ_BANDS,
-        )
+        s = AudioSensor(**_default_sensor_kwargs(device="bad_dev"))
         with pytest.raises(AudioError, match="Failed to open audio device"):
             s.open()
 
@@ -435,13 +430,7 @@ class TestAudioSensorOpen:
         fake_sd.InputStream = MagicMock(side_effect=OSError("boom"))
         sys.modules["sounddevice"] = fake_sd
         from sensor import AudioError, AudioSensor
-        s = AudioSensor(
-            device_index=0,
-            sample_rate_hz=SAMPLE_RATE,
-            window_size=WINDOW_SIZE,
-            window_function="hann",
-            eq_bands_hz=EQ_BANDS,
-        )
+        s = AudioSensor(**_default_sensor_kwargs())
         with pytest.raises(AudioError):
             s.open()
         assert s._stream is None
@@ -456,16 +445,10 @@ class TestAudioSensorReadFrame:
         _remove_fake_sounddevice()
         sys.modules.pop("sensor", None)
 
-    def _open_sensor(self, waveform: np.ndarray):
-        fake_sd, fake_stream = _make_fake_sounddevice(waveform)
+    def _open_sensor(self, mono_waveform: np.ndarray):
+        fake_sd, fake_stream = _make_fake_sounddevice(mono_waveform)
         from sensor import AudioSensor
-        s = AudioSensor(
-            device_index=0,
-            sample_rate_hz=SAMPLE_RATE,
-            window_size=WINDOW_SIZE,
-            window_function="hann",
-            eq_bands_hz=EQ_BANDS,
-        )
+        s = AudioSensor(**_default_sensor_kwargs())
         s.open()
         return s, fake_stream
 
@@ -476,21 +459,34 @@ class TestAudioSensorReadFrame:
         rdg = s.read_frame()
         assert isinstance(rdg, AudioStreamReadings)
 
-    def test_read_frame_waveform_matches_input(self):
+    def test_read_frame_extracts_correct_channel(self):
+        """Signal on channel 0 must appear in waveform; channel 1 must be silent."""
         wave = _sine_wave(500.0, amplitude=0.4)
-        s, _ = self._open_sensor(wave)
+        s, _ = self._open_sensor(wave)  # signal on CHANNEL=0
         rdg = s.read_frame()
         np.testing.assert_allclose(rdg.waveform, wave, atol=1e-6)
 
+    def test_read_frame_wrong_channel_gives_silence(self):
+        """If signal is on channel 1 but we read channel 0, waveform should be zeros."""
+        wave = _sine_wave(500.0, amplitude=0.4)
+        # Put signal on channel 1, sensor reads channel 0
+        stereo = _stereo_from_mono(wave, channel=1)
+        fake_sd = types.ModuleType("sounddevice")
+        fake_stream = MagicMock()
+        fake_stream.read.return_value = (stereo, False)
+        fake_stream.start = MagicMock()
+        fake_sd.InputStream = MagicMock(return_value=fake_stream)
+        sys.modules["sounddevice"] = fake_sd
+        from sensor import AudioSensor
+        s = AudioSensor(**_default_sensor_kwargs(channel=0))
+        s.open()
+        rdg = s.read_frame()
+        # Channel 0 is zeros, so waveform should be flat
+        assert rdg.rms_amplitude < 1e-6
+
     def test_read_frame_without_open_raises(self):
         from sensor import AudioError, AudioSensor
-        s = AudioSensor(
-            device_index=0,
-            sample_rate_hz=SAMPLE_RATE,
-            window_size=WINDOW_SIZE,
-            window_function="hann",
-            eq_bands_hz=EQ_BANDS,
-        )
+        s = AudioSensor(**_default_sensor_kwargs())
         with pytest.raises(AudioError, match="not opened"):
             s.read_frame()
 
@@ -502,13 +498,7 @@ class TestAudioSensorReadFrame:
         fake_sd.InputStream = MagicMock(return_value=fake_stream)
         sys.modules["sounddevice"] = fake_sd
         from sensor import AudioError, AudioSensor
-        s = AudioSensor(
-            device_index=0,
-            sample_rate_hz=SAMPLE_RATE,
-            window_size=WINDOW_SIZE,
-            window_function="hann",
-            eq_bands_hz=EQ_BANDS,
-        )
+        s = AudioSensor(**_default_sensor_kwargs())
         s.open()
         with pytest.raises(AudioError, match="Audio read failed"):
             s.read_frame()
@@ -523,7 +513,7 @@ class TestAudioSensorReadFrame:
 
     def test_close_idempotent(self):
         wave = np.zeros(WINDOW_SIZE, dtype=np.float32)
-        s, fake_stream = self._open_sensor(wave)
+        s, _ = self._open_sensor(wave)
         s.close()
         s.close()  # second call must not raise
 
@@ -614,7 +604,7 @@ class TestAudioStreamPayloadBuilding:
                 waveform=[0.0] * 4,
                 fft_bins={"frequencies_hz": [0.0], "magnitudes_db": [-60.0]},
                 eq_bands={"bands_hz": [1000.0], "levels_db": [-40.0]},
-                rms_amplitude=-0.1,  # invalid
+                rms_amplitude=-0.1,
                 db_level=-60.0,
             )
 
@@ -660,9 +650,12 @@ class TestAudioConfig:
     def test_config_loads_without_error(self):
         from common.config import load_config
         cfg = load_config(SERVICE_DIR / "config.toml")
-        assert cfg["sensor"]["sample_rate_hz"] == 16000
-        assert cfg["sensor"]["window_size"] == 800
+        assert cfg["sensor"]["sample_rate_hz"] == 48000
+        assert cfg["sensor"]["window_size"] == 2400
+        assert cfg["sensor"]["channels"] == 2
+        assert cfg["sensor"]["channel"] == 0
         assert cfg["sensor"]["window_function"] == "hann"
+        assert cfg["sensor"]["device"] == "mic_sv"
         assert cfg["mqtt"]["stream_topic"] == "home/sensors/audio/inmp441/stream"
         assert cfg["mqtt"]["summary_topic"] == "home/sensors/audio/inmp441"
 
@@ -686,13 +679,11 @@ class TestAudioConfig:
         assert cfg["sensor"]["summary_interval_seconds"] == 5
 
     def test_stream_topic_no_retain(self):
-        """Config must not set retain=true on the stream topic (QoS 0 / no-retain)."""
+        """Config must not set retain=true on the stream topic."""
         import tomllib
         config_path = SERVICE_DIR / "config.toml"
         with config_path.open("rb") as fh:
             raw = tomllib.load(fh)
-        # The stream topic intentionally has no retain key in config;
-        # retain is hard-coded to False in main.py.
         assert "retain" not in raw.get("mqtt", {}), (
             "stream retain must not be set to true in config"
         )

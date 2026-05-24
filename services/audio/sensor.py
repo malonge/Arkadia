@@ -7,6 +7,16 @@ FFT spectrum analysis, octave-band aggregation, and RMS computation.
 the module can be imported and the pure computation functions can be used
 in unit tests without a real audio device or ``sounddevice`` installed.
 
+Hardware notes (INMP441 + googlevoicehat-soundcard driver on Pi 5)
+------------------------------------------------------------------
+- The driver always presents a **stereo** stream at **48 000 Hz** in
+  ``float32`` or ``S32_LE`` format — even though the INMP441 is a mono
+  microphone.
+- Which stereo channel carries audio data depends on how the L/R pin is
+  wired: GND → left channel (index 0); 3.3 V → right channel (index 1).
+- The ``channel`` constructor parameter selects which channel is extracted
+  into the mono ``waveform`` array.
+
 Public surface
 --------------
 - :class:`AudioSensor`               — hardware wrapper (open / read_frame / close)
@@ -83,7 +93,7 @@ def compute_stream_readings(
     no side-effects and does not touch hardware, making it directly testable.
 
     Args:
-        waveform:       1-D ``float32`` array of *window_size* samples,
+        waveform:       1-D ``float32`` array of *window_size* mono samples,
                         amplitude normalised to ``[-1.0, 1.0]``.
         sample_rate_hz: Sample rate used during capture (Hz).
         window_size:    Expected length of *waveform*.
@@ -133,10 +143,6 @@ def compute_summary_rms(sum_sq_rms: float, n_frames: int) -> AudioReadings:
     Uses the energy-average formula:
     ``overall_rms = sqrt( Σ(rms_i²) / n_frames )``
 
-    This preserves the correct RMS across the summary window because
-    ``rms_i² = mean(x_i²)``, so the average of ``rms_i²`` equals the
-    mean of all squared samples.
-
     Args:
         sum_sq_rms: Accumulated sum of ``rms_amplitude²`` for each frame.
         n_frames:   Number of frames accumulated.
@@ -167,9 +173,6 @@ def _aggregate_eq_bands(
     Each band spans one octave: [centre / √2, centre × √2).  Magnitudes are
     converted to linear power before averaging, then back to dBFS so that the
     result reflects acoustic energy rather than arithmetic average of dB values.
-
-    Bands that contain no FFT bins (possible at very low sample rates or very
-    small window sizes) receive :data:`_DB_FLOOR`.
     """
     levels_db: list[float] = []
     sqrt2 = math.sqrt(2.0)
@@ -180,7 +183,6 @@ def _aggregate_eq_bands(
         mask = (freqs >= low) & (freqs < high)
 
         if mask.any():
-            # Convert dB → linear power, average, convert back.
             linear = 10.0 ** (mags_db[mask] / 20.0)
             mean_linear = float(np.mean(linear))
             levels_db.append(20.0 * math.log10(max(mean_linear, 1e-10)))
@@ -202,15 +204,23 @@ class AudioError(Exception):
 class AudioSensor:
     """Wraps a sounddevice InputStream for the INMP441 I2S microphone.
 
+    The ``googlevoicehat-soundcard`` ALSA driver presents the INMP441 as a
+    **stereo** device regardless of the physical microphone being mono.  The
+    *channel* parameter selects which stereo channel (0 = left, 1 = right)
+    carries the actual microphone signal and is extracted into the mono
+    ``waveform`` array returned by :meth:`read_frame`.
+
     Hardware is initialised in :meth:`open`.  Constructing the object does not
     contact any hardware, so tests can instantiate it freely.
 
     Example::
 
         sensor = AudioSensor(
-            device_index=0,
-            sample_rate_hz=16000,
-            window_size=800,
+            device="mic_sv",
+            sample_rate_hz=48000,
+            channels=2,
+            channel=0,
+            window_size=2400,
             window_function="hann",
             eq_bands_hz=[63, 125, 250, 500, 1000, 2000, 4000, 8000],
         )
@@ -222,14 +232,18 @@ class AudioSensor:
     def __init__(
         self,
         *,
-        device_index: int | None,
+        device: str | int | None,
         sample_rate_hz: int,
+        channels: int,
+        channel: int,
         window_size: int,
         window_function: str,
         eq_bands_hz: list[float],
     ) -> None:
-        self.device_index = device_index
+        self.device = device
         self.sample_rate_hz = sample_rate_hz
+        self.channels = channels
+        self.channel = channel
         self.window_size = window_size
         self.window_function = window_function
         self.eq_bands_hz = eq_bands_hz
@@ -256,8 +270,8 @@ class AudioSensor:
 
         try:
             self._stream = sd.InputStream(
-                device=self.device_index,
-                channels=1,
+                device=self.device,
+                channels=self.channels,
                 samplerate=self.sample_rate_hz,
                 blocksize=self.window_size,
                 dtype="float32",
@@ -265,12 +279,15 @@ class AudioSensor:
             self._stream.start()
         except Exception as exc:
             self._stream = None
-            raise AudioError(f"Failed to open audio device {self.device_index}: {exc}") from exc
+            raise AudioError(
+                f"Failed to open audio device {self.device!r}: {exc}"
+            ) from exc
 
         logger.info(
-            "Audio stream opened (device=%s, rate=%d Hz, window=%d samples)",
-            self.device_index,
+            "Audio stream opened (device=%r, rate=%d Hz, channels=%d, window=%d samples)",
+            self.device,
             self.sample_rate_hz,
+            self.channels,
             self.window_size,
             extra={"event": "audio_stream_opened"},
         )
@@ -279,7 +296,10 @@ class AudioSensor:
         """Block until one audio frame is ready, then return computed readings.
 
         Each call blocks for approximately ``window_size / sample_rate_hz``
-        seconds (e.g. 50 ms for window_size=800, sample_rate_hz=16 000).
+        seconds (e.g. 50 ms for window_size=2400, sample_rate_hz=48 000).
+
+        The stereo hardware stream is read in full; only the channel selected
+        by ``self.channel`` is extracted to form the mono waveform.
 
         Raises :class:`AudioError` on device read failure.
         """
@@ -297,7 +317,8 @@ class AudioSensor:
                 extra={"event": "audio_overflow"},
             )
 
-        waveform = data.flatten().astype(np.float32)
+        # data shape: (window_size, channels) — extract the mono channel.
+        waveform = data[:, self.channel].astype(np.float32)
 
         return compute_stream_readings(
             waveform,
