@@ -51,6 +51,22 @@ class Meta(BaseModel):
     aggregation: str = Field(..., description="Aggregation method, e.g. 'median' or 'rms'")
 
 
+class StreamMeta(Meta):
+    """Extended metadata for real-time audio stream frames.
+
+    Adds ``window_function`` to the standard ``Meta`` fields so that
+    consumers know how to interpret FFT magnitudes.
+    """
+
+    window_function: str = Field(
+        "hann",
+        description=(
+            "Windowing function applied before FFT, e.g. 'hann', 'hamming', "
+            "'blackman'.  Affects spectral leakage characteristics."
+        ),
+    )
+
+
 class Diagnostics(BaseModel):
     """Optional service diagnostics block."""
 
@@ -80,10 +96,99 @@ class SCD40Readings(BaseModel):
 
 
 class AudioReadings(BaseModel):
-    """Ambient sound level from the INMP441 microphone."""
+    """Ambient sound level from the INMP441 microphone.
+
+    Published in the periodic summary payload every 5 seconds.
+    """
 
     rms_amplitude: float = Field(..., ge=0, description="RMS amplitude of the sample window")
     db_level: float = Field(..., description="Sound pressure level in dBFS")
+
+
+# ---------------------------------------------------------------------------
+# Real-time audio stream sub-models
+# ---------------------------------------------------------------------------
+
+
+class FftBins(BaseModel):
+    """FFT frequency spectrum for a single audio frame.
+
+    Contains N/2 bins spanning DC (0 Hz) to the Nyquist frequency
+    (``sample_rate_hz`` / 2).  Bin spacing is ``sample_rate_hz`` /
+    ``window_size`` Hz.  The DC bin (index 0) is included but is typically
+    not rendered in visualizations.
+    """
+
+    frequencies_hz: list[float] = Field(
+        ...,
+        description="Centre frequency of each bin in Hz, from 0 to Nyquist",
+    )
+    magnitudes_db: list[float] = Field(
+        ...,
+        description=(
+            "Magnitude of each bin in dBFS (0 dBFS = full-scale); "
+            "length must equal len(frequencies_hz)"
+        ),
+    )
+
+
+class EqBands(BaseModel):
+    """Octave-band levels aggregated from the FFT for equalizer display.
+
+    Default band centres follow the standard ISO 266 octave series:
+    63, 125, 250, 500, 1000, 2000, 4000, 8000 Hz.  Each level is the
+    mean power of all FFT bins whose centre frequency falls within the
+    band's octave boundaries (lower = centre / sqrt(2),
+    upper = centre * sqrt(2)).
+    """
+
+    bands_hz: list[float] = Field(
+        ...,
+        description="Centre frequency of each octave band in Hz",
+    )
+    levels_db: list[float] = Field(
+        ...,
+        description=(
+            "Mean power level of each band in dBFS; "
+            "length must equal len(bands_hz)"
+        ),
+    )
+
+
+class AudioStreamReadings(BaseModel):
+    """Real-time audio frame containing waveform, FFT spectrum, and EQ bands.
+
+    One instance is published per captured window of audio.  A frame is
+    self-contained: consumers may render either the time-domain waveform
+    (amplitude vs. time) or the frequency-domain spectrum (magnitude vs.
+    frequency) without buffering adjacent frames.
+    """
+
+    sample_rate_hz: int = Field(
+        ..., gt=0, description="Sample rate of the audio capture in Hz"
+    )
+    window_size: int = Field(
+        ..., gt=0, description="Number of samples in this frame"
+    )
+    waveform: list[float] = Field(
+        ...,
+        description=(
+            "Time-domain amplitude samples normalised to [-1.0, 1.0]; "
+            "length equals window_size"
+        ),
+    )
+    fft_bins: FftBins = Field(
+        ..., description="FFT spectrum computed from waveform via the configured window function"
+    )
+    eq_bands: EqBands = Field(
+        ..., description="Octave-band summary for equalizer display"
+    )
+    rms_amplitude: float = Field(
+        ..., ge=0, description="RMS amplitude of waveform, normalised to [0, 1]"
+    )
+    db_level: float = Field(
+        ..., description="RMS level of this frame in dBFS"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +202,8 @@ class SensorPayload(_UTCTimestampMixin):
     schema_version: Literal[1] = 1
     sensor_id: str = Field(..., min_length=1)
     timestamp: datetime = Field(..., description="UTC ISO 8601 timestamp of the reading")
-    readings: BME280Readings | SCD40Readings | AudioReadings
-    meta: Meta
+    readings: BME280Readings | SCD40Readings | AudioReadings | AudioStreamReadings
+    meta: Meta | StreamMeta
     diagnostics: Diagnostics | None = None
 
 
@@ -130,11 +235,35 @@ class SCD40Payload(_UTCTimestampMixin):
 
 
 class AudioPayload(_UTCTimestampMixin):
-    """Fully-typed payload for the INMP441 audio sensor."""
+    """Fully-typed payload for the INMP441 audio sensor.
+
+    Published to ``home/sensors/audio/inmp441`` with QoS 1 and retain=true
+    on the configured summary interval (default: every 5 seconds).
+    """
 
     schema_version: Literal[1] = 1
     sensor_id: str = Field("inmp441", pattern=r"^inmp441$")
     timestamp: datetime
     readings: AudioReadings
     meta: Meta
+    diagnostics: Diagnostics | None = None
+
+
+class AudioStreamPayload(_UTCTimestampMixin):
+    """Real-time stream payload for the INMP441 audio sensor.
+
+    Published to ``home/sensors/audio/inmp441/stream`` at the configured
+    frame rate (default: 20 Hz / every 50 ms) with QoS 0 and retain=false.
+
+    QoS 0 is intentional: dropping an occasional frame is acceptable for
+    real-time visualization, and the reduced overhead keeps latency low.
+    retain=false prevents new subscribers from receiving a stale audio frame
+    that is no longer representative of the current sound environment.
+    """
+
+    schema_version: Literal[1] = 1
+    sensor_id: str = Field("inmp441", pattern=r"^inmp441$")
+    timestamp: datetime
+    readings: AudioStreamReadings
+    meta: StreamMeta
     diagnostics: Diagnostics | None = None

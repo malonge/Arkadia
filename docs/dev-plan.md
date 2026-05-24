@@ -119,28 +119,34 @@ PRs 3, 4, and 5 can be worked in parallel once PR 2 is merged. PR 6 can start as
 
 ## PR 6 — API Service
 
-**Goal:** The API service — MQTT subscriber, in-memory state store, and HTTP layer.
+**Goal:** The API service — MQTT subscriber, in-memory state store, HTTP layer, and WebSocket bridge for the real-time audio stream.
 
 ### Scope
 
-- `services/api/store.py` — thread-safe dict protected by `threading.Lock`, keyed by `sensor_id`, stores latest deserialized payload and receipt timestamp
-- `services/api/main.py` — FastAPI app init; starts MQTT client with wildcard subscription `home/sensors/#` in a background thread via `loop_start()`; on message: deserialize, validate against `common` model, upsert store
+- `services/api/store.py` — thread-safe dict protected by `threading.Lock`, keyed by `sensor_id`, stores latest deserialized payload and receipt timestamp; `AudioStreamPayload` frames are **not** stored — they are forwarded directly to the WebSocket manager
+- `services/api/ws.py` — `AudioStreamBroadcaster`: holds a set of active `WebSocket` connections; `broadcast(data: str)` sends to all connections and drops any that are closed or errored
+- `services/api/main.py` — FastAPI app init; starts MQTT client with wildcard subscription `home/sensors/#` in a background thread via `loop_start()`; on message: if topic ends in `/stream`, call `AudioStreamBroadcaster.broadcast()`; otherwise deserialize, validate, upsert store
 - `services/api/routes/health.py` — `GET /health`: broker connectivity status and uptime
-- `services/api/routes/version.py` — `GET /version`: service name, version string, git commit (read from environment or a `version.py` generated at deploy time)
+- `services/api/routes/version.py` — `GET /version`: service name, version string, git commit
 - `services/api/routes/sensors.py`:
   - `GET /sensors` — latest reading from all sensors
   - `GET /sensors/{sensor_id}` — latest reading for one sensor (200 / 404 / 503)
   - `GET /sensors/{sensor_id}/status` — staleness metadata
-- API key middleware — validates `X-API-Key` header on all routes except `/health`
+- `services/api/routes/audio.py`:
+  - `GET /ws/audio/stream` (WebSocket) — upgrades connection, registers with `AudioStreamBroadcaster`, sends frames until client disconnects; requires `api_key` query parameter
+- API key middleware — validates `X-API-Key` header on HTTP routes except `/health`; WebSocket route validates `api_key` query parameter on upgrade
 - `services/api/config.toml`, `services/api/api.service`, `services/api/requirements.txt`
 
 ### Acceptance Criteria
 
 - API starts and immediately hydrates state from retained MQTT messages.
-- All endpoints return correct responses and shapes.
+- All HTTP endpoints return correct responses and shapes.
 - Returns `401` on missing or incorrect API key.
 - Returns `503` on a known sensor ID with no data received yet.
 - Staleness flag flips correctly when a sensor stops publishing.
+- WebSocket endpoint at `GET /ws/audio/stream` receives `AudioStreamPayload` JSON frames at approximately 20 Hz while the audio service is running.
+- Connecting a second WebSocket client causes both clients to receive frames simultaneously.
+- Closing a WebSocket connection does not affect other active connections.
 
 ---
 
