@@ -102,18 +102,55 @@ PRs 3, 4, and 5 can be worked in parallel once PR 2 is merged. PR 6 can start as
 
 ## PR 5 — Audio Service
 
-**Goal:** Third sensor service. Differs from I2C services in that it uses I2S and RMS aggregation rather than median of discrete samples.
+**Goal:** Third sensor service. Differs from I2C services in that it uses I2S and publishes two MQTT topics: a retained periodic summary and a non-retained real-time stream for equalizer and waveform visualization.
+
+### Raspberry Pi 5 hardware requirements
+
+The `googlevoicehat-soundcard` ALSA driver used on Pi 5 / Bookworm requires **48 000 Hz stereo** capture.  Configure `/boot/firmware/config.txt` and `/etc/asound.conf` as documented in `skills/pi-deployment.md` before deploying.
 
 ### Scope
 
-- `services/audio/sensor.py` — reads I2S frames from the INMP441 via `sounddevice`, computes RMS amplitude and dB over the sample window
-- `services/audio/main.py`, `services/audio/config.toml`, `services/audio/audio.service`, `services/audio/requirements.txt`
+- `services/audio/sensor.py`:
+  - Opens an I2S input stream from the INMP441 via `sounddevice` at 48 000 Hz, 2 channels
+  - Captures frames of `window_size` (default 2 400) samples; extracts the mono channel from stereo
+  - Applies a Hann window and computes a 2 400-point FFT via `numpy.fft.rfft`
+  - Converts FFT output to dBFS magnitudes: `20 * log10(|X[k]| / (window_size / 2))`
+  - Aggregates FFT bins into ISO 266 octave bands (63, 125, 250, 500, 1000, 2000, 4000, 8000 Hz)
+  - Computes per-frame RMS and dBFS
+  - Returns both an `AudioStreamReadings` object (for the stream) and accumulated data (for the periodic summary)
+- `services/audio/main.py`:
+  - Initialises `sounddevice` input stream and MQTT client
+  - **Stream loop** (20 Hz): publishes `AudioStreamPayload` to `home/sensors/audio/inmp441/stream` with QoS 0, `retain=false`
+  - **Summary loop** (every 5 s): computes energy-average RMS over accumulated frames, publishes `AudioPayload` to `home/sensors/audio/inmp441` with QoS 1, `retain=true`
+- `services/audio/config.toml`:
+  ```toml
+  [sensor]
+  device = 0                # PortAudio device index — find with `python -m sounddevice`
+  sample_rate_hz = 48000    # googlevoicehat-soundcard hardware requirement
+  channels = 2              # driver always presents stereo
+  channel = 0               # 0=left (L/R=GND), 1=right (L/R=3V3)
+  window_size = 2400        # 50 ms at 48 kHz → 20 Hz frame rate
+  window_function = "hann"
+  eq_bands_hz = [63, 125, 250, 500, 1000, 2000, 4000, 8000]
+  summary_interval_seconds = 5
+
+  [mqtt]
+  stream_topic  = "home/sensors/audio/inmp441/stream"
+  summary_topic = "home/sensors/audio/inmp441"
+  client_id     = "audio-service"
+  ```
+- `services/audio/audio.service` — `Group=audio` for ALSA/sounddevice access; `User=<username>` must match the actual Pi user
+- `services/audio/requirements.txt` — `sounddevice`, `numpy`
 
 ### Acceptance Criteria
 
-- Service starts and publishes retained JSON to `home/sensors/audio/inmp441` on the configured interval.
-- RMS value is non-zero under ambient sound conditions.
-- Payload validates against the `common` Pydantic model.
+- Service starts and publishes retained JSON to `home/sensors/audio/inmp441` every 5 seconds.
+- Service publishes non-retained JSON to `home/sensors/audio/inmp441/stream` at approximately 20 Hz.
+- Both payloads validate against the corresponding `common` Pydantic models (`AudioPayload`, `AudioStreamPayload`).
+- `fft_bins.frequencies_hz` has `window_size / 2 + 1` entries spanning 0 Hz to `sample_rate_hz / 2`.
+- `eq_bands.levels_db` has one entry per configured `eq_bands_hz` centre.
+- `waveform` has exactly `window_size` entries, all in `[-1.0, 1.0]`.
+- RMS value in the summary payload is non-zero under ambient sound conditions.
 
 ---
 
@@ -160,7 +197,7 @@ PRs 3, 4, and 5 can be worked in parallel once PR 2 is merged. PR 6 can start as
   - apt installs (`mosquitto`, `python3-venv`, I2C tools)
   - Enable I2C and I2S in `/boot/firmware/config.txt`
   - Create a virtualenv per service
-  - `pip install -e ../../common` in each service virtualenv
+  - `pip install -e .` (from repo root) in each service virtualenv to install the `common` package
   - Copy `mosquitto/mosquitto.conf` to `/etc/mosquitto/conf.d/`
   - Scaffold `/etc/home-monitor.env` with placeholder values
 - `scripts/deploy.sh`:
