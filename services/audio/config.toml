@@ -1,5 +1,5 @@
 [sensor]
-device = "mic_sv"           # named ALSA device, not an integer index
+device = 0
 sample_rate_hz = 48000      # hardware requirement — 16000 is not supported
 channels = 2                # hardware is always stereo
 channel = 0                 # 0 = left (L/R pin tied to GND); 1 = right (L/R to 3V3)
