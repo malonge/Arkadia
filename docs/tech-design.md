@@ -231,37 +231,93 @@ Sensor services are synchronous and single-threaded.
 
 ## Audio Service
 
-**Responsibility:** Measure ambient sound level.
+**Responsibility:** Measure ambient sound level and publish both a periodic summary and a continuous real-time stream suitable for equalizer and waveform visualization.
 
 - Interface: I2S
-- Library: `sounddevice` or ALSA wrapper
-- Topic: `home/sensors/audio/inmp441`
-- Interval: 5 seconds
-- Aggregation: RMS over the sample window
+- Library: `sounddevice`
+- Additional dependency: `numpy` (FFT computation)
+
+The service operates two concurrent publish modes:
+
+### Summary Mode (periodic, retained)
+
+| Property | Value |
+|------|------|
+| Topic | `home/sensors/audio/inmp441` |
+| Interval | 5 seconds |
+| QoS | 1 |
+| Retain | `true` |
+| Aggregation | RMS over the full 5-second window |
+| Payload | `AudioPayload` (`rms_amplitude`, `db_level`) |
+
+### Stream Mode (continuous, non-retained)
+
+| Property | Value |
+|------|------|
+| Topic | `home/sensors/audio/inmp441/stream` |
+| Frame rate | 20 Hz (one message every 50 ms) |
+| QoS | 0 |
+| Retain | `false` |
+| Aggregation | Per-frame FFT with Hann window |
+| Payload | `AudioStreamPayload` (waveform, FFT bins, EQ bands, RMS) |
+
+**Why QoS 0 for the stream?**  Dropping an occasional frame is acceptable for real-time visualization — the next frame arrives within 50 ms.  The lower overhead keeps end-to-end latency predictable.
+
+**Why `retain=false` for the stream?**  Retained messages are replayed to every new subscriber.  A stale audio frame from minutes ago would mislead visualizations before live frames begin arriving.
+
+### Frame Parameters
+
+| Parameter | Default | Description |
+|------|------|------|
+| `sample_rate_hz` | 16 000 | I2S capture rate |
+| `window_size` | 1 024 | Samples per frame (~64 ms of audio) |
+| `fft_size` | 1 024 | FFT length; bins span 0–8 000 Hz in ~15.6 Hz steps |
+| `eq_bands_hz` | `[63, 125, 250, 500, 1000, 2000, 4000, 8000]` | ISO 266 octave centres |
+| `window_function` | `hann` | Applied before FFT to reduce spectral leakage |
+
+### Polling Loop (Stream Mode)
+
+```text
+initialize sounddevice input stream (sample_rate_hz, blocksize=window_size)
+loop forever:
+    capture window_size samples → waveform (normalised float32)
+    apply Hann window
+    compute FFT → N/2 complex bins
+    convert to magnitudes in dBFS
+    aggregate bins into octave EQ bands
+    compute RMS and dBFS of waveform
+    publish AudioStreamPayload to …/stream (QoS 0, retain=false)
+    [every 5 s: publish AudioPayload summary (QoS 1, retain=true)]
+```
 
 ---
 
 ## API Service
 
-**Responsibility:** Subscribe to sensor topics and expose the latest readings over HTTP.
+**Responsibility:** Subscribe to sensor topics, expose the latest readings over HTTP, and bridge the real-time audio stream to WebSocket clients.
 
 - Framework: FastAPI
 - Port: 8000
-- MQTT Subscription: `home/sensors/#`
+- MQTT Subscriptions: `home/sensors/#` (summary + stream topics)
 
 ### Internal Components
 
 - MQTT client
 - Thread-safe in-memory state store
 - HTTP routes
+- WebSocket manager (for real-time audio stream)
 
 ### State Store
 
-The state store is a dictionary keyed by `sensor_id`, protected by a `threading.Lock`.
+The state store is a dictionary keyed by `sensor_id`, protected by a `threading.Lock`.  Only summary payloads (from retained topics) are written into the store; `AudioStreamPayload` frames bypass the store and are forwarded directly to WebSocket connections.
 
 ### Startup Behavior
 
 When the API service connects to MQTT, the broker immediately delivers retained sensor messages. The API therefore reconstructs its state immediately after startup.
+
+### WebSocket Manager
+
+A lightweight in-process broadcaster holds a set of active WebSocket connections.  When an `AudioStreamPayload` arrives on `home/sensors/audio/inmp441/stream`, the broadcaster serializes it and sends it to every connected client in the calling thread.  Slow or disconnected clients are removed from the set without blocking the MQTT callback.
 
 ---
 
@@ -272,7 +328,8 @@ All MQTT payloads are JSON and validated using shared Pydantic models.
 ## Topic Structure
 
 ```text
-home/sensors/{category}/{sensor_id}
+home/sensors/{category}/{sensor_id}           ← periodic summary (QoS 1, retain=true)
+home/sensors/{category}/{sensor_id}/stream    ← real-time stream  (QoS 0, retain=false)
 ```
 
 Examples:
@@ -280,15 +337,31 @@ Examples:
 - `home/sensors/climate/bme280`
 - `home/sensors/air/scd40`
 - `home/sensors/audio/inmp441`
+- `home/sensors/audio/inmp441/stream`
+
+The `/stream` sub-topic is currently defined only for the audio service.
 
 ## Publish Semantics
 
-All sensor messages are published with:
+### Summary topics
+
+Periodic summary messages are published with:
 
 - QoS: `1`
 - Retain: `true`
 
 This ensures the latest reading is persisted by the broker and delivered to subscribers on connection.
+
+### Stream topic (`…/stream`)
+
+Real-time stream frames are published with:
+
+- QoS: `0`
+- Retain: `false`
+
+QoS 0 reduces per-message overhead; losing an occasional frame is acceptable
+for continuous visualization.  `retain=false` ensures new subscribers receive
+only live frames, not a potentially minutes-old snapshot.
 
 ## Standard Payload Structure
 
@@ -321,6 +394,76 @@ This ensures the latest reading is persisted by the broker and delivered to subs
 | `readings` | Yes | Measurement values |
 | `meta` | Yes | Aggregation metadata |
 | `diagnostics` | No | Service diagnostics |
+
+---
+
+## Audio Stream Payload (`AudioStreamPayload`)
+
+Published to `home/sensors/audio/inmp441/stream` at 20 Hz.
+
+### Example
+
+```json
+{
+  "schema_version": 1,
+  "sensor_id": "inmp441",
+  "timestamp": "2026-05-08T14:23:01.050Z",
+  "readings": {
+    "sample_rate_hz": 16000,
+    "window_size": 1024,
+    "waveform": [0.002, -0.005, 0.011, "...1024 values total..."],
+    "fft_bins": {
+      "frequencies_hz": [0.0, 15.625, 31.25, "...512 values total..."],
+      "magnitudes_db": [-80.1, -62.4, -55.0, "...512 values total..."]
+    },
+    "eq_bands": {
+      "bands_hz": [63, 125, 250, 500, 1000, 2000, 4000, 8000],
+      "levels_db": [-42.1, -38.5, -35.2, -30.1, -28.7, -33.4, -40.0, -55.2]
+    },
+    "rms_amplitude": 0.018,
+    "db_level": -34.9
+  },
+  "meta": {
+    "sample_count": 1024,
+    "aggregation": "fft",
+    "window_function": "hann"
+  },
+  "diagnostics": {
+    "uptime_seconds": 12345,
+    "read_failures": 0
+  }
+}
+```
+
+### `readings` Fields
+
+| Field | Type | Description |
+|------|------|------|
+| `sample_rate_hz` | `int` | Audio capture sample rate in Hz |
+| `window_size` | `int` | Samples per frame |
+| `waveform` | `float[]` | Time-domain samples, normalised to `[-1.0, 1.0]`; length = `window_size` |
+| `fft_bins.frequencies_hz` | `float[]` | Bin centre frequencies from 0 Hz to Nyquist; length = `window_size / 2` |
+| `fft_bins.magnitudes_db` | `float[]` | Bin magnitude in dBFS; same length as `frequencies_hz` |
+| `eq_bands.bands_hz` | `float[]` | ISO 266 octave-band centre frequencies |
+| `eq_bands.levels_db` | `float[]` | Mean power per band in dBFS |
+| `rms_amplitude` | `float` | RMS of `waveform`, normalised to `[0, 1]` |
+| `db_level` | `float` | RMS level in dBFS |
+
+### `meta` Fields (stream)
+
+| Field | Type | Description |
+|------|------|------|
+| `sample_count` | `int` | Equals `window_size` |
+| `aggregation` | `str` | Always `"fft"` |
+| `window_function` | `str` | Windowing function applied before FFT (default `"hann"`) |
+
+### Visualization Mapping
+
+| Visualization | Source fields |
+|------|------|
+| Oscilloscope / waveform (time × amplitude) | `readings.waveform`, x-axis derived from `sample_rate_hz` and `window_size` |
+| Frequency spectrum (Hz × dBFS) | `readings.fft_bins.frequencies_hz` × `readings.fft_bins.magnitudes_db` |
+| Equalizer bars (band × dBFS) | `readings.eq_bands.bands_hz` × `readings.eq_bands.levels_db` |
 
 ---
 
@@ -399,6 +542,38 @@ Returns sensor freshness and staleness information.
   "stale_threshold_seconds": 120
 }
 ```
+
+---
+
+### `GET /ws/audio/stream` *(WebSocket)*
+
+Streams real-time `AudioStreamPayload` frames to connected WebSocket clients.
+
+The API service subscribes to `home/sensors/audio/inmp441/stream` (QoS 0) and
+forwards each MQTT message as a UTF-8 JSON text frame to all active WebSocket
+connections.  No buffering is performed; clients receive only frames that
+arrive while they are connected.
+
+**Protocol:** WebSocket (`ws://`)  
+**Authentication:** API key supplied as a query parameter:
+`ws://<pi-hostname>:8000/ws/audio/stream?api_key=<key>`  
+**Frame format:** UTF-8 JSON text — one `AudioStreamPayload` per frame  
+**Expected rate:** 20 Hz (one frame every ~50 ms)
+
+```text
+Client                            API service                MQTT broker
+  │                                    │                          │
+  │── WS upgrade ──────────────────►  │                          │
+  │◄─ 101 Switching Protocols ──────  │                          │
+  │                                    │◄── MQTT publish ─────── │
+  │◄── JSON text frame ────────────── │  (inmp441/stream)        │
+  │◄── JSON text frame ────────────── │                          │
+  │   (repeats at 20 Hz)              │                          │
+  │── close ───────────────────────►  │                          │
+```
+
+This endpoint is the recommended integration point for browser-based
+equalizer and waveform visualizations.
 
 ---
 
@@ -487,6 +662,19 @@ Provides:
 
 - Shared Pydantic models
 - Payload serialization and validation
+
+Key models:
+
+| Model | Description |
+|------|------|
+| `Meta` | Standard aggregation metadata |
+| `StreamMeta` | Extends `Meta` with `window_function` for audio stream frames |
+| `AudioReadings` | Summary audio readings (RMS, dBFS) |
+| `FftBins` | FFT frequency bins (frequencies + magnitudes) |
+| `EqBands` | Octave-band levels for equalizer display |
+| `AudioStreamReadings` | Complete real-time frame (waveform + FFT + EQ bands + RMS) |
+| `AudioPayload` | Typed envelope for the summary topic |
+| `AudioStreamPayload` | Typed envelope for the real-time stream topic |
 
 ## `common/i2c.py`
 
@@ -720,10 +908,11 @@ A reverse proxy such as nginx can provide:
 
 # Appendix: MQTT Topics
 
-| Topic | Description |
-|------|------|
-| `home/sensors/climate/bme280` | Climate measurements |
-| `home/sensors/air/scd40` | CO₂ measurements |
-| `home/sensors/audio/inmp441` | Sound measurements |
-| `home/status/{sensor_id}` | Optional online/offline status |
+| Topic | QoS | Retain | Description |
+|------|------|------|------|
+| `home/sensors/climate/bme280` | 1 | `true` | Climate measurements (temperature, humidity, pressure) |
+| `home/sensors/air/scd40` | 1 | `true` | CO₂ measurements |
+| `home/sensors/audio/inmp441` | 1 | `true` | Audio summary (RMS amplitude, dBFS level) — 5 s interval |
+| `home/sensors/audio/inmp441/stream` | 0 | `false` | Real-time audio frames (waveform, FFT bins, EQ bands) — 20 Hz |
+| `home/status/{sensor_id}` | 1 | `true` | Optional online/offline LWT status |
 
