@@ -1,0 +1,230 @@
+"""Arkadia API service — FastAPI app, MQTT subscriber, HTTP/WebSocket bridge."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import sys
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# Resolve repo root so the common package is importable when this file is
+# executed directly from its own directory.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from common.config import load_config  # noqa: E402
+from common.mqtt import MQTTClient, configure_logging  # noqa: E402
+from services.api.store import SensorStore  # noqa: E402
+from services.api.ws import AudioStreamBroadcaster  # noqa: E402
+
+from services.api.routes import health as health_module  # noqa: E402
+from services.api.routes import sensors as sensors_module  # noqa: E402
+from services.api.routes import version as version_module  # noqa: E402
+from services.api.routes import audio as audio_module  # noqa: E402
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+_CONFIG_PATH = Path(__file__).parent / "config.toml"
+
+
+def _load_api_config() -> dict[str, Any]:
+    return load_config(_CONFIG_PATH)
+
+
+# ---------------------------------------------------------------------------
+# MQTT message handler
+# ---------------------------------------------------------------------------
+
+_STREAM_SUFFIX = "/stream"
+
+
+def _make_message_handler(
+    store: SensorStore,
+    broadcaster: AudioStreamBroadcaster,
+) -> Any:
+    def on_message(topic: str, payload: bytes) -> None:
+        try:
+            data: dict[str, Any] = json.loads(payload.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logger.warning(
+                "Received non-JSON payload on topic %s; ignoring",
+                topic,
+                extra={"event": "mqtt_bad_payload"},
+            )
+            return
+
+        if topic.endswith(_STREAM_SUFFIX):
+            broadcaster.broadcast(payload.decode("utf-8"))
+            return
+
+        sensor_id = data.get("sensor_id")
+        if not sensor_id:
+            logger.warning(
+                "Payload on topic %s missing sensor_id; ignoring",
+                topic,
+                extra={"event": "mqtt_missing_sensor_id"},
+            )
+            return
+
+        store.upsert(sensor_id, data)
+        logger.debug(
+            "Stored reading for sensor %s from topic %s",
+            sensor_id,
+            topic,
+            extra={"event": "sensor_reading_stored"},
+        )
+
+    return on_message
+
+
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    cfg = _load_api_config()
+    log_cfg = cfg.get("logging", {})
+    configure_logging(
+        level=log_cfg.get("level", "INFO"),
+        fmt=log_cfg.get("format", "json"),
+    )
+    logger.info("API service starting", extra={"event": "service_starting"})
+
+    broker_cfg = cfg.get("broker", {})
+    mqtt_cfg = cfg.get("mqtt", {})
+    sensor_cfg = cfg.get("sensors", {})
+    auth_cfg = cfg.get("auth", {})
+
+    api_key_env = auth_cfg.get("api_key_env", "MONITOR_API_KEY")
+    api_key = os.environ.get(api_key_env, "")
+    if not api_key:
+        logger.warning(
+            "API key env var %s is not set; all authenticated requests will be rejected",
+            api_key_env,
+            extra={"event": "api_key_missing"},
+        )
+
+    store = SensorStore()
+    broadcaster = AudioStreamBroadcaster()
+    broadcaster.set_loop(asyncio.get_event_loop())
+
+    mqtt_client = MQTTClient(
+        client_id=mqtt_cfg.get("client_id", "api-service"),
+        broker_host=broker_cfg.get("host", "localhost"),
+        broker_port=broker_cfg.get("port", 1883),
+        keepalive=broker_cfg.get("keepalive", 60),
+    )
+
+    handler = _make_message_handler(store, broadcaster)
+    subscription = mqtt_cfg.get("subscription", "home/sensors/#")
+    mqtt_client.subscribe(subscription, handler, qos=1)
+
+    try:
+        mqtt_client.connect()
+        mqtt_client.loop_start()
+        logger.info(
+            "MQTT client started; subscribed to %s",
+            subscription,
+            extra={"event": "mqtt_subscribed"},
+        )
+    except Exception:
+        logger.exception(
+            "Failed to connect to MQTT broker; API will start without broker",
+            extra={"event": "mqtt_connect_error"},
+        )
+
+    known_ids_raw = sensor_cfg.get("known_ids", ["bme280", "scd40", "inmp441"])
+    app.state.store = store
+    app.state.broadcaster = broadcaster
+    app.state.mqtt_client = mqtt_client
+    app.state.api_key = api_key
+    app.state.known_sensor_ids = set(known_ids_raw)
+    app.state.stale_threshold_seconds = sensor_cfg.get("stale_threshold_seconds", 120)
+
+    logger.info("API service started", extra={"event": "service_started"})
+    yield
+
+    logger.info("API service shutting down", extra={"event": "service_stopping"})
+    mqtt_client.loop_stop()
+    mqtt_client.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# API key middleware
+# ---------------------------------------------------------------------------
+
+_EXEMPT_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
+
+
+class APIKeyMiddleware(BaseHTTPMiddleware):
+    """Validate the X-API-Key header on all non-exempt HTTP routes.
+
+    WebSocket routes are validated inside their own handler via the
+    ``api_key`` query parameter.
+    """
+
+    async def dispatch(self, request: Request, call_next: Any) -> Any:
+        # WebSocket upgrades are handled in the route handler.
+        if request.headers.get("upgrade", "").lower() == "websocket":
+            return await call_next(request)
+
+        if request.url.path in _EXEMPT_PATHS:
+            return await call_next(request)
+
+        expected: str = request.app.state.api_key
+        provided = request.headers.get("X-API-Key", "")
+        if provided != expected or not expected:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized"},
+            )
+
+        return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
+# App assembly
+# ---------------------------------------------------------------------------
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="Arkadia API", lifespan=_lifespan)
+
+    app.add_middleware(APIKeyMiddleware)
+
+    app.include_router(health_module.router)
+    app.include_router(version_module.router)
+    app.include_router(sensors_module.router)
+    app.include_router(audio_module.router)
+
+    return app
+
+
+app = create_app()
+
+
+if __name__ == "__main__":
+    cfg = _load_api_config()
+    server_cfg = cfg.get("server", {})
+    uvicorn.run(
+        "main:app",
+        host=server_cfg.get("host", "0.0.0.0"),
+        port=server_cfg.get("port", 8000),
+        reload=False,
+    )
