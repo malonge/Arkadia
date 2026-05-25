@@ -59,7 +59,33 @@ install_packages() {
         python3-venv \
         python3-dev \
         i2c-tools \
-        libasound2-dev
+        libasound2-dev \
+        curl
+}
+
+# ---------------------------------------------------------------------------
+# Node.js 22 (via NodeSource — Debian/Bookworm ships Node 18 which is too old)
+# ---------------------------------------------------------------------------
+
+install_nodejs() {
+    # Skip if Node 20+ is already present.
+    if command -v node &>/dev/null; then
+        local ver
+        ver="$(node --version | sed 's/v//' | cut -d. -f1)"
+        if [[ "${ver}" -ge 20 ]]; then
+            info "Node.js $(node --version) already installed — skipping."
+            return
+        fi
+        info "Found Node.js v${ver} (too old); upgrading to Node.js 22…"
+    fi
+
+    info "Adding NodeSource Node.js 22 repository…"
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - 2>/dev/null
+
+    info "Installing Node.js 22…"
+    apt-get install -y -qq nodejs
+
+    info "Node.js $(node --version) installed."
 }
 
 # ---------------------------------------------------------------------------
@@ -264,6 +290,7 @@ info "Repository root : ${REPO_ROOT}"
 info "Service user    : ${SERVICE_USER}"
 
 install_packages
+install_nodejs
 install_mosquitto_config
 enable_i2c
 enable_i2s
