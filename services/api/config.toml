@@ -5,6 +5,7 @@ port = 8000
 [mqtt]
 client_id = "api-service"
 subscription = "home/sensors/#"
+status_subscription = "home/status/#"
 
 [sensors]
 known_ids = ["bme280", "scd40", "inmp441"]

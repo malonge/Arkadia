@@ -24,7 +24,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from common.config import load_config  # noqa: E402
 from common.mqtt import MQTTClient, configure_logging  # noqa: E402
-from services.api.store import SensorStore  # noqa: E402
+from services.api.store import ConnectivityStore, SensorStore  # noqa: E402
 from services.api.ws import AudioStreamBroadcaster  # noqa: E402
 
 from services.api.routes import health as health_module  # noqa: E402
@@ -50,6 +50,7 @@ def _load_api_config() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _STREAM_SUFFIX = "/stream"
+_STATUS_PREFIX = "home/status/"
 
 
 def _make_message_handler(
@@ -91,6 +92,46 @@ def _make_message_handler(
     return on_message
 
 
+def _make_status_handler(connectivity: ConnectivityStore) -> Any:
+    """Return a callback that updates connectivity status from ``home/status/#`` messages."""
+
+    def on_status(topic: str, payload: bytes) -> None:
+        # Derive sensor_id from the topic: "home/status/<sensor_id>"
+        sensor_id = topic[len(_STATUS_PREFIX):] if topic.startswith(_STATUS_PREFIX) else ""
+        if not sensor_id:
+            return
+
+        try:
+            data: dict[str, Any] = json.loads(payload.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logger.warning(
+                "Non-JSON status payload on topic %s; ignoring",
+                topic,
+                extra={"event": "mqtt_bad_payload"},
+            )
+            return
+
+        raw_status = data.get("status", "")
+        if raw_status not in ("online", "offline"):
+            logger.warning(
+                "Unrecognised status %r for sensor %s; ignoring",
+                raw_status,
+                sensor_id,
+                extra={"event": "mqtt_bad_status"},
+            )
+            return
+
+        connectivity.update(sensor_id, raw_status)  # type: ignore[arg-type]
+        logger.info(
+            "Sensor %s is %s",
+            sensor_id,
+            raw_status,
+            extra={"event": f"sensor_{raw_status}"},
+        )
+
+    return on_status
+
+
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
@@ -121,6 +162,7 @@ async def _lifespan(app: FastAPI):
         )
 
     store = SensorStore()
+    connectivity = ConnectivityStore()
     broadcaster = AudioStreamBroadcaster()
     broadcaster.set_loop(asyncio.get_event_loop())
 
@@ -131,16 +173,18 @@ async def _lifespan(app: FastAPI):
         keepalive=broker_cfg.get("keepalive", 60),
     )
 
-    handler = _make_message_handler(store, broadcaster)
-    subscription = mqtt_cfg.get("subscription", "home/sensors/#")
-    mqtt_client.subscribe(subscription, handler, qos=1)
+    sensor_subscription = mqtt_cfg.get("subscription", "home/sensors/#")
+    status_subscription = mqtt_cfg.get("status_subscription", "home/status/#")
+    mqtt_client.subscribe(sensor_subscription, _make_message_handler(store, broadcaster), qos=1)
+    mqtt_client.subscribe(status_subscription, _make_status_handler(connectivity), qos=1)
 
     try:
         mqtt_client.connect()
         mqtt_client.loop_start()
         logger.info(
-            "MQTT client started; subscribed to %s",
-            subscription,
+            "MQTT client started; subscribed to %s and %s",
+            sensor_subscription,
+            status_subscription,
             extra={"event": "mqtt_subscribed"},
         )
     except Exception:
@@ -151,6 +195,7 @@ async def _lifespan(app: FastAPI):
 
     known_ids_raw = sensor_cfg.get("known_ids", ["bme280", "scd40", "inmp441"])
     app.state.store = store
+    app.state.connectivity = connectivity
     app.state.broadcaster = broadcaster
     app.state.mqtt_client = mqtt_client
     app.state.api_key = api_key

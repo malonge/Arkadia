@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from services.api.routes import health as health_module
 from services.api.routes import sensors as sensors_module
 from services.api.routes import version as version_module
-from services.api.store import SensorStore
+from services.api.store import ConnectivityStore, SensorStore
 from services.api.ws import AudioStreamBroadcaster
 
 # ---------------------------------------------------------------------------
@@ -38,6 +38,7 @@ def _make_app(
         store = SensorStore()
     if known_ids is None:
         known_ids = _KNOWN_IDS
+    connectivity = ConnectivityStore()
 
     mock_mqtt = MagicMock()
     mock_mqtt.is_connected = True
@@ -66,6 +67,7 @@ def _make_app(
     app.include_router(sensors_module.router)
 
     app.state.store = store
+    app.state.connectivity = connectivity
     app.state.broadcaster = broadcaster
     app.state.mqtt_client = mock_mqtt
     app.state.api_key = api_key
