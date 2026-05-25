@@ -237,6 +237,111 @@ The `googlevoicehat-soundcard` ALSA driver used on Pi 5 / Bookworm requires **48
 
 ---
 
+## PR 9 — Web App Scaffold & Retro Design System
+
+**Goal:** Initialize the `web/` Svelte + Vite project and establish every visual building block. No live data yet — all three sensor panels show shells with placeholder content. Subsequent PRs wire in the real data.
+
+### Stack
+
+- **Framework:** Svelte 5 + Vite
+- **Fonts:** Press Start 2P (headings/labels), VT323 (numeric readouts) — Google Fonts, loaded by the browser
+- **Color palette:** Green terminal (`#0d0208` background, `#00ff41` primary, `#39ff14` accent)
+- **Canvas:** native `<canvas>` — no charting library
+- **Deployment target:** static files eventually served by FastAPI `StaticFiles` (PR 12)
+
+### Scope
+
+- `web/package.json`, `web/vite.config.js`, `web/index.html`
+- `web/src/styles/global.css` — CSS custom properties (palette, typography, spacing), pixel border helper, scanline overlay, screen flicker, blinking cursor, 7-segment font class
+- `web/src/main.js` — Svelte mount point
+- `web/src/App.svelte` — three-panel grid, boot-sequence typewriter, settings gate
+- `web/src/api.js` — API client: reads key from `localStorage`, exports `fetchSensors()`, `fetchSensorStatus()`, `createAudioStream()`; no real calls yet (stubs)
+- `web/src/components/Header.svelte` — service name, version badge, blinking `█` cursor
+- `web/src/components/SensorCard.svelte` — pixel-border panel; props: `title`, `sensorId`, `connectivity` (`"online"`/`"offline"`/`"unknown"`), `lastSeen`; default slot for readings content
+- `web/src/components/StatusBar.svelte` — last poll time, broker connectivity dot
+- `web/src/components/SettingsModal.svelte` — API key input; saves to `localStorage`; blocks app until key saved
+
+### Acceptance Criteria
+
+- `npm run dev` serves the app at `http://localhost:5173`.
+- `npm run build` produces `web/dist/` with no errors.
+- Settings modal appears on first load when `localStorage` has no key.
+- Three SensorCard panels render with pixel borders and correct retro styling.
+- Scanline overlay and screen flicker are visible.
+- Header shows blinking cursor.
+- Connectivity dots render in all three states (green/red/grey) when manually set in the component.
+
+---
+
+## PR 10 — Climate & Air Panels
+
+**Goal:** Wire the BME280 and SCD40 panels to live data from the API.
+
+### Scope
+
+- `web/src/components/TemperatureGauge.svelte` — vertical column of 16 discrete pixel blocks; color shifts blue → green → yellow → red
+- `web/src/components/BarMeter.svelte` — horizontal row of discrete pixel blocks; accepts `value`, `min`, `max`, `thresholds` (for color changes)
+- `web/src/components/SevenSegDisplay.svelte` — numeric readout styled as a 7-segment LED display using CSS `font-variant-numeric` + VT323
+- Climate panel: temperature (gauge + number), humidity (bar + %), pressure (7-seg hPa)
+- Air quality panel: CO₂ ppm (7-seg + bar colored green/amber/red by threshold), temperature/humidity if available
+- Polling loop in `App.svelte`: `fetchSensors()` every 30 s; staleness from `fetchSensorStatus()`; retry on error with exponential backoff
+- Display stale indicator (dimmed readings + `⚠ STALE` badge) when sensor is stale
+
+### Acceptance Criteria
+
+- Panels show live readings from the API, updating every 30 seconds.
+- CO₂ bar color changes at 800 ppm (amber) and 1 200 ppm (red).
+- Stale indicator appears when `stale: true` is returned by the status endpoint.
+- Readings display correctly when the API is unreachable (last known value held, error badge shown).
+
+---
+
+## PR 11 — Audio Panel
+
+**Goal:** Real-time audio visualization using the WebSocket stream.
+
+### Scope
+
+- `web/src/components/EQVisualizer.svelte` — `<canvas>`; 8 pixel columns (one per ISO band) with discrete step heights; peak hold dots; smooth decay animation; idle animation when disconnected
+- `web/src/components/WaveformScope.svelte` — `<canvas>`; pixelated oscilloscope line (amplitude snapped to grid); phosphor glow via `shadowBlur`; flat idle line when disconnected
+- WebSocket client in `api.js`: `createAudioStream(onFrame, onStatus)` — connects to `/ws/audio/stream?api_key=<key>`, parses `AudioStreamPayload` JSON, calls `onFrame`; reconnects with exponential backoff on disconnect
+- Audio panel: EQ bars (top), waveform scope (bottom), RMS dBFS readout (7-seg), connectivity status
+- Summary RMS from `GET /sensors/inmp441` (polled with other sensors) shown as a secondary number
+
+### Acceptance Criteria
+
+- EQ bars update at approximately 20 Hz while the audio service is running.
+- Waveform updates at approximately 20 Hz.
+- Disconnecting from WebSocket triggers the idle animation within 500 ms.
+- Reconnecting resumes live data without page reload.
+- Second browser tab receives the same stream simultaneously.
+
+---
+
+## PR 12 — FastAPI Integration & Deployment
+
+**Goal:** Serve the web app from the API service and automate the build in `deploy.sh`.
+
+### Scope
+
+- Prefix all existing API routes with `/api` (add `prefix="/api"` to each router's `include_router` call in `main.py`)
+- Update `api.js` base URL to `/api`
+- Mount `web/dist/` as `StaticFiles` at `/` in `main.py`
+- Update `services/api/requirements.txt` to add `aiofiles` (required for `StaticFiles`)
+- `scripts/deploy.sh`: add build step — `cd "${REPO_ROOT}/web" && npm ci && npm run build`
+- `scripts/setup.sh`: add Node.js install step — `apt-get install -y nodejs npm`
+- Update `README.md` with access URL (`http://<pi-hostname>:8000/`)
+- Smoke test: `curl http://localhost:8000/` returns the HTML shell; `curl http://localhost:8000/api/health` returns `{"status":"ok",...}`
+
+### Acceptance Criteria
+
+- Opening `http://<pi>:8000/` in a browser loads the dashboard.
+- All API endpoints remain functional at `/api/*`.
+- Re-running `deploy.sh` rebuilds the web app and restarts the API service.
+- `setup.sh` installs Node.js on a fresh Pi.
+
+---
+
 ## Reference: Design Document Decisions Carried Into This Breakdown
 
 | Decision | Reflected In |

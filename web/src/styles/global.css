@@ -1,0 +1,234 @@
+/* =========================================================
+   Arkadia — Retro Green Terminal Design System
+   ========================================================= */
+
+/* ---------------------------------------------------------
+   Google Fonts are loaded in index.html.  These fallbacks
+   ensure legibility if the CDN is unreachable.
+   --------------------------------------------------------- */
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
+
+/* ---------------------------------------------------------
+   CSS Custom Properties
+   --------------------------------------------------------- */
+:root {
+  /* Palette */
+  --bg:         #0d0208;
+  --bg-card:    #0f0d0f;
+  --bg-raised:  #141414;
+  --primary:    #00ff41;
+  --accent:     #39ff14;
+  --dim:        #00a829;
+  --dimmer:     #005c17;
+  --muted:      #1e3a1e;
+  --danger:     #ff3131;
+  --warning:    #ffb000;
+  --info:       #00cfff;
+
+  /* Status dots */
+  --dot-online:  #00ff41;
+  --dot-offline: #ff3131;
+  --dot-unknown: #555;
+
+  /* Typography */
+  --font-pixel: 'Press Start 2P', 'Courier New', monospace;
+  --font-vt:    'VT323', 'Courier New', monospace;
+
+  /* Scale — base unit is 4 px */
+  --u1: 4px;
+  --u2: 8px;
+  --u3: 12px;
+  --u4: 16px;
+  --u5: 20px;
+  --u6: 24px;
+  --u8: 32px;
+  --u10: 40px;
+
+  /* Border */
+  --border-color: var(--primary);
+  --border-w: 2px;
+
+  /* Pixel glow */
+  --glow: 0 0 8px var(--primary), 0 0 2px var(--accent);
+  --glow-dim: 0 0 4px var(--dimmer);
+}
+
+/* ---------------------------------------------------------
+   Reset & Base
+   --------------------------------------------------------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--primary);
+  font-family: var(--font-pixel);
+  font-size: 10px;
+  line-height: 1.6;
+  /* Subtle screen flicker */
+  animation: flicker 8s infinite;
+}
+
+#app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ---------------------------------------------------------
+   Scanline overlay
+   --------------------------------------------------------- */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9000;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent         0px,
+    transparent         3px,
+    rgba(0, 0, 0, 0.18) 3px,
+    rgba(0, 0, 0, 0.18) 4px
+  );
+}
+
+/* ---------------------------------------------------------
+   Screen flicker
+   --------------------------------------------------------- */
+@keyframes flicker {
+  0%,  19%,  21%,  23%,  25%,  54%,  56%,  100% { opacity: 1; }
+  20%, 24%,  55% { opacity: 0.92; }
+}
+
+/* ---------------------------------------------------------
+   Blinking cursor
+   --------------------------------------------------------- */
+.cursor {
+  display: inline-block;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* ---------------------------------------------------------
+   Pixel border helper  (add .pixel-border to any element)
+   --------------------------------------------------------- */
+.pixel-border {
+  border: var(--border-w) solid var(--border-color);
+  box-shadow:
+    var(--border-w) var(--border-w) 0 var(--dimmer),
+    inset 0 0 0 1px var(--dimmer);
+}
+
+.pixel-border--danger {
+  --border-color: var(--danger);
+}
+
+.pixel-border--warning {
+  --border-color: var(--warning);
+}
+
+/* ---------------------------------------------------------
+   Typography helpers
+   --------------------------------------------------------- */
+.font-vt {
+  font-family: var(--font-vt);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.font-vt-lg {
+  font-family: var(--font-vt);
+  font-size: 48px;
+  line-height: 1;
+}
+
+.font-vt-xl {
+  font-family: var(--font-vt);
+  font-size: 64px;
+  line-height: 1;
+}
+
+.label {
+  font-family: var(--font-pixel);
+  font-size: 7px;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  text-transform: uppercase;
+}
+
+.value {
+  font-family: var(--font-vt);
+  font-size: 36px;
+  color: var(--primary);
+  line-height: 1;
+}
+
+/* ---------------------------------------------------------
+   Connectivity dot
+   --------------------------------------------------------- */
+.dot {
+  display: inline-block;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.dot--online  { color: var(--dot-online);  text-shadow: 0 0 6px var(--dot-online); }
+.dot--offline { color: var(--dot-offline); text-shadow: 0 0 6px var(--dot-offline); }
+.dot--unknown { color: var(--dot-unknown); }
+
+/* ---------------------------------------------------------
+   Status badge
+   --------------------------------------------------------- */
+.badge {
+  display: inline-block;
+  font-family: var(--font-pixel);
+  font-size: 7px;
+  padding: 2px var(--u2);
+  border: 1px solid currentColor;
+}
+
+.badge--stale   { color: var(--warning); border-color: var(--warning); }
+.badge--offline { color: var(--danger);  border-color: var(--danger);  }
+.badge--ok      { color: var(--dim);     border-color: var(--dimmer);  }
+
+/* ---------------------------------------------------------
+   Utility
+   --------------------------------------------------------- */
+.muted  { color: var(--dim); }
+.dimmer { color: var(--dimmer); }
+.danger { color: var(--danger); }
+.warning { color: var(--warning); }
+
+.glow {
+  text-shadow: var(--glow);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------
+   Scrollbar
+   --------------------------------------------------------- */
+::-webkit-scrollbar        { width: 6px; background: var(--bg); }
+::-webkit-scrollbar-thumb  { background: var(--dimmer); border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: var(--dim); }
