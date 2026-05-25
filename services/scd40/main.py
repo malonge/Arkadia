@@ -23,7 +23,7 @@ from pathlib import Path
 from common.config import load_config
 from common.i2c import I2CError
 from common.models import Diagnostics, Meta, SCD40Payload, SCD40Readings
-from common.mqtt import MQTTClient, configure_logging
+from common.mqtt import LWTConfig, MQTTClient, configure_logging
 
 # Ensure sensor.py is importable regardless of the working directory.
 sys.path.insert(0, str(Path(__file__).parent))
@@ -89,11 +89,18 @@ def main() -> None:
     broker = cfg["broker"]
     mqtt_cfg = cfg["mqtt"]
 
+    status_topic = "home/status/scd40"
     client = MQTTClient(
         client_id=mqtt_cfg["client_id"],
         broker_host=broker["host"],
         broker_port=broker["port"],
         keepalive=broker["keepalive"],
+        lwt=LWTConfig(
+            topic=status_topic,
+            payload='{"status": "offline"}',
+            qos=1,
+            retain=True,
+        ),
     )
 
     try:
@@ -133,6 +140,12 @@ def main() -> None:
         logger.critical("Sensor init failed: %s", exc, extra={"event": "sensor_error"})
         client.loop_stop()
         sys.exit(1)
+
+    try:
+        client.publish(status_topic, '{"status": "online"}', qos=1, retain=True)
+        logger.info("Published online status", extra={"event": "status_online"})
+    except RuntimeError as exc:
+        logger.warning("Could not publish online status: %s", exc)
 
     # ----------------------------------------------------------------
     # Poll loop

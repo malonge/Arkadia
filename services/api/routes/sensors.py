@@ -90,6 +90,9 @@ async def get_sensor_status(sensor_id: str, request: Request) -> JSONResponse:
     seconds_since = (now - entry.received_at).total_seconds()
     stale = seconds_since > stale_threshold
 
+    connectivity_store = request.app.state.connectivity
+    connectivity = connectivity_store.get(sensor_id)
+
     return JSONResponse(
         content={
             "sensor_id": sensor_id,
@@ -97,5 +100,6 @@ async def get_sensor_status(sensor_id: str, request: Request) -> JSONResponse:
             "seconds_since_update": round(seconds_since, 1),
             "stale": stale,
             "stale_threshold_seconds": stale_threshold,
+            "connectivity": connectivity,
         }
     )

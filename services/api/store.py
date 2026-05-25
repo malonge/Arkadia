@@ -5,7 +5,9 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
+
+ConnectivityStatus = Literal["online", "offline", "unknown"]
 
 
 @dataclass
@@ -49,3 +51,35 @@ class SensorStore:
     def __len__(self) -> int:
         with self._lock:
             return len(self._data)
+
+
+class ConnectivityStore:
+    """Thread-safe map of sensor_id → connectivity status.
+
+    Updated by messages arriving on ``home/status/#``.
+
+    Status values:
+        ``"online"``   — the sensor service published a successful startup.
+        ``"offline"``  — the broker delivered the service's LWT (ungraceful exit)
+                         or the service explicitly published offline before stopping.
+        ``"unknown"``  — no status message has been received yet.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._data: dict[str, ConnectivityStatus] = {}
+
+    def update(self, sensor_id: str, status: ConnectivityStatus) -> None:
+        """Record *status* for *sensor_id*."""
+        with self._lock:
+            self._data[sensor_id] = status
+
+    def get(self, sensor_id: str) -> ConnectivityStatus:
+        """Return the current status for *sensor_id*, defaulting to ``"unknown"``."""
+        with self._lock:
+            return self._data.get(sensor_id, "unknown")
+
+    def all(self) -> dict[str, ConnectivityStatus]:
+        """Return a shallow copy of all known statuses."""
+        with self._lock:
+            return dict(self._data)
