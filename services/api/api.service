@@ -1,18 +1,37 @@
 [Unit]
 Description=Arkadia API Service
+Documentation=https://github.com/malonge/Arkadia
 After=mosquitto.service
 Requires=mosquitto.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
+
+# Change 'pi' to your actual username.
 User=pi
-WorkingDirectory=/home/pi/Arkadia/services/api
-ExecStart=/home/pi/Arkadia/services/api/.venv/bin/python main.py
+
+# /etc/home-monitor.env must exist and define ARKADIA_ROOT — the absolute
+# path to this repository on the target machine.  Example:
+#   ARKADIA_ROOT=/home/pi/Projects/Arkadia
+# It must also define MONITOR_API_KEY for the API authentication key.
+EnvironmentFile=/etc/home-monitor.env
+
+# ExecStart uses /bin/bash so that the ARKADIA_ROOT variable from
+# EnvironmentFile can be expanded inside the quoted string.
+ExecStart=/bin/bash -c \
+  'exec "${ARKADIA_ROOT}/services/api/.venv/bin/python" \
+        "${ARKADIA_ROOT}/services/api/main.py"'
+
 Restart=on-failure
 RestartSec=5
-EnvironmentFile=/etc/home-monitor.env
+TimeoutStopSec=10
+
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=api
+
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
