@@ -227,6 +227,41 @@ body::after {
 }
 
 /* ---------------------------------------------------------
+   Reading status — color indicator blocks
+   Used by ReadingRow and canvas visualizers.
+   --------------------------------------------------------- */
+:root {
+  --status-good:    #00ff41;   /* in-range */
+  --status-ok:      #aaff00;   /* acceptable edge */
+  --status-warn:    #ffb000;   /* outside comfort zone */
+  --status-danger:  #ff3131;   /* unhealthy / extreme */
+  --status-unknown: #555555;
+}
+
+/* Inline LED-style indicator square */
+.indicator {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  /* default to unknown */
+  background: var(--status-unknown);
+}
+
+.indicator--good    { background: var(--status-good);   box-shadow: 0 0 6px var(--status-good);   }
+.indicator--ok      { background: var(--status-ok);     box-shadow: 0 0 6px var(--status-ok);     }
+.indicator--warn    { background: var(--status-warn);   box-shadow: 0 0 6px var(--status-warn);   }
+.indicator--danger  { background: var(--status-danger); box-shadow: 0 0 6px var(--status-danger); }
+.indicator--unknown { background: var(--status-unknown); }
+
+/* Value text tinting */
+.reading--good    { color: var(--status-good);   }
+.reading--ok      { color: var(--status-ok);     }
+.reading--warn    { color: var(--status-warn);   }
+.reading--danger  { color: var(--status-danger); }
+.reading--unknown { color: var(--dim); }
+
+/* ---------------------------------------------------------
    Scrollbar
    --------------------------------------------------------- */
 ::-webkit-scrollbar        { width: 6px; background: var(--bg); }

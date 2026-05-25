@@ -1,10 +1,11 @@
 <script>
   import { onMount } from 'svelte';
-  import { getApiKey } from './api.js';
+  import { getApiKey, dbfsToDB } from './api.js';
   import Header from './components/Header.svelte';
   import SensorCard from './components/SensorCard.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
+  import ReadingRow from './components/ReadingRow.svelte';
 
   // ---------------------------------------------------------------------------
   // Settings gate
@@ -129,15 +130,10 @@
         lastSeen={sensors.bme280.lastSeen}
         stale={sensors.bme280.stale}
       >
-        <div class="placeholder-body">
-          <p class="label">TEMPERATURE</p>
-          <p class="value dimmer">—.— °C</p>
-          <p class="label">HUMIDITY</p>
-          <p class="value dimmer">—— %</p>
-          <p class="label">PRESSURE</p>
-          <p class="value dimmer">———— hPa</p>
-          <p class="coming-soon muted">LIVE DATA IN PR 10</p>
-        </div>
+        <ReadingRow label="TEMPERATURE" value="—.—" unit="°C"  status="unknown" />
+        <ReadingRow label="HUMIDITY"    value="——"  unit="%"    status="unknown" />
+        <ReadingRow label="PRESSURE"    value="————" unit=" hPa" status="unknown" />
+        <p class="coming-soon muted">LIVE DATA IN PR 10</p>
       </SensorCard>
 
       <!-- Air quality panel -->
@@ -148,15 +144,10 @@
         lastSeen={sensors.scd40.lastSeen}
         stale={sensors.scd40.stale}
       >
-        <div class="placeholder-body">
-          <p class="label">CO₂</p>
-          <p class="value dimmer">———— ppm</p>
-          <p class="label">TEMPERATURE</p>
-          <p class="value dimmer">—.— °C</p>
-          <p class="label">HUMIDITY</p>
-          <p class="value dimmer">—— %</p>
-          <p class="coming-soon muted">LIVE DATA IN PR 10</p>
-        </div>
+        <ReadingRow label="CO₂"         value="————" unit=" ppm" status="unknown" />
+        <ReadingRow label="TEMPERATURE" value="—.—"  unit="°C"  status="unknown" />
+        <ReadingRow label="HUMIDITY"    value="——"   unit="%"    status="unknown" />
+        <p class="coming-soon muted">LIVE DATA IN PR 10</p>
       </SensorCard>
 
       <!-- Audio panel -->
@@ -167,17 +158,49 @@
         lastSeen={sensors.inmp441.lastSeen}
         stale={sensors.inmp441.stale}
       >
-        <div class="placeholder-body">
-          <!-- EQ bar placeholder -->
-          <div class="eq-placeholder" aria-hidden="true">
-            {#each [6, 10, 8, 14, 12, 9, 5, 7] as h}
-              <div class="eq-col" style="height: {h * 6}px"></div>
-            {/each}
-          </div>
-          <p class="label">RMS LEVEL</p>
-          <p class="value dimmer">—— dBFS</p>
-          <p class="coming-soon muted">LIVE AUDIO IN PR 11</p>
+        <!-- EQ bar placeholder with colored tops -->
+        <div class="eq-placeholder" aria-label="Equalizer placeholder">
+          {#each [
+            { h: 6,  top: 'ok'     },
+            { h: 10, top: 'good'   },
+            { h: 8,  top: 'ok'     },
+            { h: 14, top: 'warn'   },
+            { h: 12, top: 'warn'   },
+            { h: 9,  top: 'ok'     },
+            { h: 5,  top: 'good'   },
+            { h: 7,  top: 'ok'     },
+          ] as bar}
+            <div class="eq-col" style="height: {bar.h * 6}px">
+              <div class="eq-top eq-top--{bar.top}"></div>
+            </div>
+          {/each}
         </div>
+
+        <!-- Waveform oscilloscope placeholder -->
+        <div class="waveform-placeholder" aria-label="Waveform oscilloscope placeholder">
+          <span class="label">WAVEFORM</span>
+          <div class="waveform-screen">
+            <svg width="100%" height="48" preserveAspectRatio="none" aria-hidden="true">
+              <!-- idle flat line with slight noise -->
+              <polyline
+                points="0,24 20,24 40,23 60,25 80,24 100,24 120,23 140,25 160,24 180,24 200,23 220,25 240,24 260,24 280,23 300,25 320,24"
+                fill="none"
+                stroke="var(--dimmer)"
+                stroke-width="1.5"
+              />
+            </svg>
+          </div>
+        </div>
+
+        <!-- Level readings: dBFS + estimated dB SPL -->
+        <ReadingRow
+          label="LEVEL"
+          value="——"
+          unit=" dBFS"
+          status="unknown"
+          sub="~—— dB SPL"
+        />
+        <p class="coming-soon muted">LIVE AUDIO IN PR 11</p>
       </SensorCard>
     </main>
 
@@ -256,40 +279,58 @@
     }
   }
 
-  /* Placeholder content inside cards */
-  .placeholder-body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--u3);
-  }
-
-  .value {
-    font-family: var(--font-vt);
-    font-size: 40px;
-    line-height: 1;
-  }
-
   .coming-soon {
     font-family: var(--font-pixel);
     font-size: 7px;
-    margin-top: var(--u3);
+    margin-top: var(--u2);
     padding-top: var(--u3);
     border-top: 1px solid var(--dimmer);
   }
 
-  /* Static EQ bar placeholder */
+  /* EQ bar placeholder */
   .eq-placeholder {
     display: flex;
     align-items: flex-end;
     gap: 4px;
     height: 90px;
-    padding-bottom: var(--u2);
+    padding-bottom: 0;
     border-bottom: 1px solid var(--dimmer);
+    margin-bottom: var(--u2);
   }
 
   .eq-col {
     flex: 1;
-    background: var(--dimmer);
     min-width: 8px;
+    background: var(--dim);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+  }
+
+  /* Top 3-pixel cap on each EQ bar — color indicates amplitude */
+  .eq-top {
+    height: 4px;
+    width: 100%;
+    flex-shrink: 0;
+  }
+
+  .eq-top--good   { background: var(--status-good);   box-shadow: 0 0 4px var(--status-good);   }
+  .eq-top--ok     { background: var(--status-ok);     box-shadow: 0 0 4px var(--status-ok);     }
+  .eq-top--warn   { background: var(--status-warn);   box-shadow: 0 0 4px var(--status-warn);   }
+  .eq-top--danger { background: var(--status-danger); box-shadow: 0 0 4px var(--status-danger); }
+
+  /* Waveform oscilloscope placeholder */
+  .waveform-placeholder {
+    display: flex;
+    flex-direction: column;
+    gap: var(--u2);
+  }
+
+  .waveform-screen {
+    background: var(--bg);
+    border: 1px solid var(--dimmer);
+    padding: var(--u2);
+    box-shadow: inset 0 0 8px rgba(0, 255, 65, 0.04);
   }
 </style>

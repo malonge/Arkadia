@@ -1,4 +1,5 @@
 <script>
+  import { LOCATION } from '../api.js';
   let { lastPoll = null, pollError = false, brokerConnected = false } = $props();
 </script>
 
@@ -18,8 +19,9 @@
     {/if}
   </span>
 
-  <span class="item">
-    <span class="dimmer">ARKADIA v1.1.0</span>
+  <span class="item coords">
+    <span class="dimmer">◉</span>
+    <span class="muted">{LOCATION.label}</span>
   </span>
 </footer>
 

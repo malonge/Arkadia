@@ -6,6 +6,97 @@
  * never appears in source code.
  */
 
+// ---------------------------------------------------------------------------
+// Location (hardcoded until GPS is integrated)
+// ---------------------------------------------------------------------------
+
+export const LOCATION = {
+  lat:  34.0792184,
+  lon: -118.3549672,
+  /** Compact display string, e.g. "34.0792°N, 118.3550°W" */
+  label: '34.0792°N, 118.3550°W',
+};
+
+// ---------------------------------------------------------------------------
+// Audio calibration
+// ---------------------------------------------------------------------------
+
+/**
+ * Approximate offset from dBFS to dB SPL for the INMP441 microphone.
+ * INMP441 sensitivity: −26 dBFS at 94 dB SPL (1 kHz, 1 Pa)
+ * → offset = 94 − (−26) = 120
+ *
+ * Apply as:  dB_SPL ≈ dBFS + INMP441_OFFSET
+ * Label results with "~" to indicate they are uncalibrated.
+ */
+export const INMP441_OFFSET = 120;
+
+/** Convert a dBFS value to approximate dB SPL. */
+export function dbfsToDB(dbfs) {
+  return dbfs + INMP441_OFFSET;
+}
+
+// ---------------------------------------------------------------------------
+// Threshold helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Return a status string for a numeric value given an ordered threshold table.
+ *
+ * @param {number} value
+ * @param {Array<[number, number, string]>} ranges  Each entry: [lo, hi, status]
+ *   where lo is inclusive and hi is exclusive.  Ranges should be exhaustive.
+ * @returns {'good'|'ok'|'warn'|'danger'|'unknown'}
+ */
+export function statusFor(value, ranges) {
+  if (value == null || isNaN(value)) return 'unknown';
+  for (const [lo, hi, status] of ranges) {
+    if (value >= lo && value < hi) return status;
+  }
+  return 'unknown';
+}
+
+export const THRESHOLDS = {
+  /** Temperature in °C */
+  temperature_c: [
+    [-Infinity, 10,  'danger'],
+    [10,        16,  'warn'  ],
+    [16,        26,  'good'  ],
+    [26,        30,  'ok'    ],
+    [30,  Infinity,  'danger'],
+  ],
+  /** Relative humidity in % */
+  humidity_pct: [
+    [-Infinity, 25,  'warn'  ],
+    [25,        30,  'ok'    ],
+    [30,        60,  'good'  ],
+    [60,        70,  'ok'    ],
+    [70,  Infinity,  'warn'  ],
+  ],
+  /** Atmospheric pressure in hPa */
+  pressure_hpa: [
+    [-Infinity, 980,  'warn'  ],
+    [980,       990,  'ok'    ],
+    [990,       1025, 'good'  ],
+    [1025,      1035, 'ok'    ],
+    [1035, Infinity,  'warn'  ],
+  ],
+  /** CO₂ in ppm */
+  co2_ppm: [
+    [-Infinity, 800,  'good'  ],
+    [800,       1000, 'ok'    ],
+    [1000,      1200, 'warn'  ],
+    [1200, Infinity,  'danger'],
+  ],
+  /** Audio RMS dBFS */
+  db_level: [
+    [-Infinity, -60,  'ok'    ],
+    [-60,       -30,  'good'  ],
+    [-30,       -10,  'warn'  ],
+    [-10,  Infinity,  'danger'],
+  ],
+};
+
 const BASE = '/api';
 const KEY_STORAGE = 'arkadia_api_key';
 
