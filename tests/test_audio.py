@@ -655,7 +655,7 @@ class TestAudioConfig:
         assert cfg["sensor"]["channels"] == 2
         assert cfg["sensor"]["channel"] == 0
         assert cfg["sensor"]["window_function"] == "hann"
-        assert cfg["sensor"]["device"] == "mic_sv"
+        assert cfg["sensor"]["device"] == 0
         assert cfg["mqtt"]["stream_topic"] == "home/sensors/audio/inmp441/stream"
         assert cfg["mqtt"]["summary_topic"] == "home/sensors/audio/inmp441"
 

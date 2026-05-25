@@ -1,0 +1,21 @@
+[Unit]
+Description=Arkadia API Service
+After=mosquitto.service
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Arkadia/services/api
+ExecStart=/home/pi/Arkadia/services/api/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/etc/home-monitor.env
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
