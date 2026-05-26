@@ -1,22 +1,34 @@
 <script>
   import { onMount } from 'svelte';
-  import { getApiKey, dbfsToDB } from './api.js';
-  import Header from './components/Header.svelte';
-  import SensorCard from './components/SensorCard.svelte';
-  import StatusBar from './components/StatusBar.svelte';
+  import {
+    getApiKey,
+    dbfsToDB,
+    statusFor,
+    THRESHOLDS,
+    fetchHealth,
+    fetchSensors,
+    fetchSensorStatus,
+    formatRelativeTime,
+    formatHMS,
+  } from './api.js';
+
+  import Header        from './components/Header.svelte';
+  import SensorCard    from './components/SensorCard.svelte';
+  import StatusBar     from './components/StatusBar.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
-  import ReadingRow from './components/ReadingRow.svelte';
+  import ReadingRow    from './components/ReadingRow.svelte';
+  import TemperatureGauge from './components/TemperatureGauge.svelte';
+  import BarMeter      from './components/BarMeter.svelte';
 
   // ---------------------------------------------------------------------------
   // Settings gate
   // ---------------------------------------------------------------------------
-  let apiKey = $state(getApiKey());
+  let apiKey      = $state(getApiKey());
   let showSettings = $state(!getApiKey());
 
   function handleSave(key) {
     apiKey = key;
     showSettings = false;
-    // Re-trigger boot when key is set for the first time
     startBoot();
   }
 
@@ -35,18 +47,16 @@
     '',
   ];
 
-  let booting = $state(true);
+  let booting   = $state(true);
   let bootLines = $state([]);
-  let bootDone = $state(false);
+  let bootDone  = $state(false);
 
   function startBoot() {
-    booting = true;
+    booting   = true;
     bootLines = [];
-    bootDone = false;
+    bootDone  = false;
 
-    let lineIdx = 0;
-    let charIdx = 0;
-    let current = '';
+    let lineIdx = 0, charIdx = 0, current = '';
 
     function tick() {
       if (lineIdx >= BOOT_LINES.length) {
@@ -62,39 +72,120 @@
         setTimeout(tick, 28);
       } else {
         bootLines = [...bootLines.slice(0, lineIdx), current];
-        lineIdx++;
-        charIdx = 0;
-        current = '';
+        lineIdx++; charIdx = 0; current = '';
         setTimeout(tick, lineIdx === BOOT_LINES.length ? 400 : 80);
       }
     }
-
     tick();
   }
 
   // ---------------------------------------------------------------------------
-  // Placeholder sensor state (data wired in PR 10/11)
+  // Sensor state
   // ---------------------------------------------------------------------------
-  // These will be replaced by real API polling in subsequent PRs.
-  const sensors = {
-    bme280:  { title: 'CLIMATE',     connectivity: 'unknown', lastSeen: null, stale: false },
-    scd40:   { title: 'AIR QUALITY', connectivity: 'unknown', lastSeen: null, stale: false },
-    inmp441: { title: 'AUDIO',       connectivity: 'unknown', lastSeen: null, stale: false },
-  };
 
+  function makeSensor(title) {
+    return { title, connectivity: 'unknown', lastSeen: null, stale: false, readings: null };
+  }
+
+  let bme280  = $state(makeSensor('CLIMATE'));
+  let scd40   = $state(makeSensor('AIR QUALITY'));
+  let inmp441 = $state(makeSensor('AUDIO'));
+
+  // Derived display values for BME280
+  const tempC  = $derived(bme280.readings?.temperature_c ?? null);
+  const humPct = $derived(bme280.readings?.humidity_pct  ?? null);
+  const presHpa = $derived(bme280.readings?.pressure_hpa ?? null);
+
+  const tempStatus = $derived(statusFor(tempC,   THRESHOLDS.temperature_c));
+  const humStatus  = $derived(statusFor(humPct,  THRESHOLDS.humidity_pct));
+  const presStatus = $derived(statusFor(presHpa, THRESHOLDS.pressure_hpa));
+
+  // Derived display values for SCD40
+  const co2Ppm     = $derived(scd40.readings?.co2_ppm      ?? null);
+  const scdTempC   = $derived(scd40.readings?.temperature_c ?? null);
+  const scdHumPct  = $derived(scd40.readings?.humidity_pct  ?? null);
+
+  const co2Status     = $derived(statusFor(co2Ppm,    THRESHOLDS.co2_ppm));
+  const scdTempStatus = $derived(statusFor(scdTempC,  THRESHOLDS.temperature_c));
+  const scdHumStatus  = $derived(statusFor(scdHumPct, THRESHOLDS.humidity_pct));
+
+  // ---------------------------------------------------------------------------
+  // Polling
+  // ---------------------------------------------------------------------------
   let brokerConnected = $state(false);
-  let lastPoll = $state(null);
-  let pollError = $state(false);
+  let lastPoll        = $state(null);
+  let pollError       = $state(false);
+  let retryDelay      = 5_000;
+  let pollTimer       = null;
+
+  async function poll() {
+    const [healthRes, sensorsRes, s1Res, s2Res, s3Res] = await Promise.allSettled([
+      fetchHealth(),
+      fetchSensors(),
+      fetchSensorStatus('bme280'),
+      fetchSensorStatus('scd40'),
+      fetchSensorStatus('inmp441'),
+    ]);
+
+    // Broker health
+    if (healthRes.status === 'fulfilled') {
+      brokerConnected = healthRes.value.broker_connected;
+    }
+
+    // Latest readings
+    if (sensorsRes.status === 'fulfilled') {
+      const d = sensorsRes.value;
+      if (d.bme280)  bme280.readings  = d.bme280.readings;
+      if (d.scd40)   scd40.readings   = d.scd40.readings;
+      if (d.inmp441) inmp441.readings = d.inmp441.readings;
+    }
+
+    // Per-sensor status (connectivity + staleness + last_seen)
+    const applyStatus = (res, sensor) => {
+      if (res.status === 'fulfilled') {
+        sensor.connectivity = res.value.connectivity;
+        sensor.stale        = res.value.stale;
+        sensor.lastSeen     = formatRelativeTime(res.value.last_seen);
+      }
+    };
+    applyStatus(s1Res, bme280);
+    applyStatus(s2Res, scd40);
+    applyStatus(s3Res, inmp441);
+
+    // Mark overall poll result
+    const anyFailed = [healthRes, sensorsRes].some(r => r.status === 'rejected');
+    if (anyFailed) {
+      pollError  = true;
+      retryDelay = Math.min(retryDelay * 2, 60_000);
+    } else {
+      pollError  = false;
+      retryDelay = 30_000;
+      lastPoll   = formatHMS(new Date());
+    }
+  }
+
+  function schedulePoll() {
+    poll().finally(() => {
+      pollTimer = setTimeout(schedulePoll, retryDelay);
+    });
+  }
 
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
   onMount(() => {
     if (apiKey) startBoot();
+    // Start polling after the boot animation, or immediately if already loaded.
+    const delay = apiKey ? 1800 : 0;
+    pollTimer = setTimeout(schedulePoll, delay);
+
+    return () => {
+      if (pollTimer) clearTimeout(pollTimer);
+    };
   });
 </script>
 
-<!-- Settings modal blocks everything until key is entered -->
+<!-- Settings modal -->
 {#if showSettings}
   <SettingsModal onSave={handleSave} />
 {/if}
@@ -113,50 +204,110 @@
   </div>
 {/if}
 
-<!-- Main dashboard (rendered behind boot overlay for instant display after fade) -->
+<!-- Main dashboard -->
 {#if !showSettings}
   <div class="layout" class:hidden={booting}>
-    <Header
-      brokerConnected={brokerConnected}
-      onSettingsClick={openSettings}
-    />
+    <Header brokerConnected={brokerConnected} onSettingsClick={openSettings} />
 
     <main class="dashboard">
-      <!-- Climate panel -->
+
+      <!-- ── CLIMATE (BME280) ─────────────────────────────────────────── -->
       <SensorCard
-        title={sensors.bme280.title}
+        title={bme280.title}
         sensorId="bme280"
-        connectivity={sensors.bme280.connectivity}
-        lastSeen={sensors.bme280.lastSeen}
-        stale={sensors.bme280.stale}
+        connectivity={bme280.connectivity}
+        lastSeen={bme280.lastSeen}
+        stale={bme280.stale}
       >
-        <ReadingRow label="TEMPERATURE" value="—.—" unit="°C"  status="unknown" />
-        <ReadingRow label="HUMIDITY"    value="——"  unit="%"    status="unknown" />
-        <ReadingRow label="PRESSURE"    value="————" unit=" hPa" status="unknown" />
-        <p class="coming-soon muted">LIVE DATA IN PR 10</p>
+        <div class="climate-layout">
+          <TemperatureGauge value={tempC} />
+          <div class="climate-readings">
+            <ReadingRow
+              label="TEMPERATURE"
+              value={tempC != null ? tempC.toFixed(1) : '—.—'}
+              unit="°C"
+              status={tempStatus}
+            />
+            <ReadingRow
+              label="HUMIDITY"
+              value={humPct != null ? humPct.toFixed(0) : '——'}
+              unit="%"
+              status={humStatus}
+            />
+            <ReadingRow
+              label="PRESSURE"
+              value={presHpa != null ? presHpa.toFixed(0) : '————'}
+              unit=" hPa"
+              status={presStatus}
+            />
+          </div>
+        </div>
       </SensorCard>
 
-      <!-- Air quality panel -->
+      <!-- ── AIR QUALITY (SCD40) ─────────────────────────────────────── -->
       <SensorCard
-        title={sensors.scd40.title}
+        title={scd40.title}
         sensorId="scd40"
-        connectivity={sensors.scd40.connectivity}
-        lastSeen={sensors.scd40.lastSeen}
-        stale={sensors.scd40.stale}
+        connectivity={scd40.connectivity}
+        lastSeen={scd40.lastSeen}
+        stale={scd40.stale}
       >
-        <ReadingRow label="CO₂"         value="————" unit=" ppm" status="unknown" />
-        <ReadingRow label="TEMPERATURE" value="—.—"  unit="°C"  status="unknown" />
-        <ReadingRow label="HUMIDITY"    value="——"   unit="%"    status="unknown" />
-        <p class="coming-soon muted">LIVE DATA IN PR 10</p>
+        <!-- CO₂ prominently with bar -->
+        <div class="co2-block">
+          <ReadingRow
+            label="CO₂"
+            value={co2Ppm != null ? co2Ppm.toFixed(0) : '————'}
+            unit=" ppm"
+            status={co2Status}
+          />
+          <BarMeter
+            value={co2Ppm}
+            min={400}
+            max={2000}
+            blocks={12}
+            thresholds={THRESHOLDS.co2_ppm}
+            label="CO₂ level bar"
+          />
+          <div class="co2-scale">
+            <span class="dimmer">400</span>
+            <span class="dimmer">GOOD</span>
+            <span class="dimmer">WARN</span>
+            <span class="dimmer">2000</span>
+          </div>
+        </div>
+
+        <!-- Secondary: temperature + humidity from SCD40 -->
+        {#if scdTempC != null || scdHumPct != null}
+          <div class="air-secondary">
+            {#if scdTempC != null}
+              <ReadingRow
+                label="TEMPERATURE"
+                value={scdTempC.toFixed(1)}
+                unit="°C"
+                status={scdTempStatus}
+              />
+            {/if}
+            {#if scdHumPct != null}
+              <ReadingRow
+                label="HUMIDITY"
+                value={scdHumPct.toFixed(0)}
+                unit="%"
+                status={scdHumStatus}
+              />
+            {/if}
+          </div>
+        {:else}
+          <p class="awaiting muted">AWAITING SENSOR DATA…</p>
+        {/if}
       </SensorCard>
 
-      <!-- Audio panel -->
+      <!-- ── AUDIO (INMP441) — placeholder until PR 11 ─────────────── -->
       <SensorCard
-        title={sensors.inmp441.title}
+        title={inmp441.title}
         sensorId="inmp441"
-        connectivity={sensors.inmp441.connectivity}
-        lastSeen={sensors.inmp441.lastSeen}
-        stale={sensors.inmp441.stale}
+        connectivity={inmp441.connectivity}
+        lastSeen={inmp441.lastSeen}
+        stale={inmp441.stale}
       >
         <!-- EQ bar placeholder with colored tops -->
         <div class="eq-placeholder" aria-label="Equalizer placeholder">
@@ -177,85 +328,54 @@
         </div>
 
         <!-- Waveform oscilloscope placeholder -->
-        <div class="waveform-placeholder" aria-label="Waveform oscilloscope placeholder">
+        <div class="waveform-placeholder">
           <span class="label">WAVEFORM</span>
           <div class="waveform-screen">
             <svg width="100%" height="48" preserveAspectRatio="none" aria-hidden="true">
-              <!-- idle flat line with slight noise -->
               <polyline
                 points="0,24 20,24 40,23 60,25 80,24 100,24 120,23 140,25 160,24 180,24 200,23 220,25 240,24 260,24 280,23 300,25 320,24"
-                fill="none"
-                stroke="var(--dimmer)"
-                stroke-width="1.5"
+                fill="none" stroke="var(--dimmer)" stroke-width="1.5"
               />
             </svg>
           </div>
         </div>
 
-        <!-- Level readings: dBFS + estimated dB SPL -->
-        <ReadingRow
-          label="LEVEL"
-          value="——"
-          unit=" dBFS"
-          status="unknown"
-          sub="~—— dB SPL"
-        />
+        {#if inmp441.readings}
+          {@const dbfs = inmp441.readings.db_level}
+          <ReadingRow
+            label="LEVEL"
+            value={dbfs.toFixed(1)}
+            unit=" dBFS"
+            status={statusFor(dbfs, THRESHOLDS.db_level)}
+            sub={`~${dbfsToDB(dbfs).toFixed(1)} dB SPL`}
+          />
+        {:else}
+          <ReadingRow label="LEVEL" value="——" unit=" dBFS" status="unknown" sub="~—— dB SPL" />
+        {/if}
+
         <p class="coming-soon muted">LIVE AUDIO IN PR 11</p>
       </SensorCard>
     </main>
 
-    <StatusBar
-      lastPoll={lastPoll}
-      pollError={pollError}
-      brokerConnected={brokerConnected}
-    />
+    <StatusBar lastPoll={lastPoll} pollError={pollError} brokerConnected={brokerConnected} />
   </div>
 {/if}
 
 <style>
   /* Boot screen */
   .boot-screen {
-    position: fixed;
-    inset: 0;
+    position: fixed; inset: 0;
     background: var(--bg);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: flex; align-items: center; justify-content: center;
     z-index: 7000;
   }
+  .boot-lines { display: flex; flex-direction: column; gap: var(--u3); padding: var(--u8); }
+  .boot-line  { font-family: var(--font-pixel); font-size: 10px; color: var(--primary); letter-spacing: 0.05em; white-space: pre; }
+  .dim        { color: var(--dim); margin-right: var(--u2); }
 
-  .boot-lines {
-    display: flex;
-    flex-direction: column;
-    gap: var(--u3);
-    padding: var(--u8);
-  }
-
-  .boot-line {
-    font-family: var(--font-pixel);
-    font-size: 10px;
-    color: var(--primary);
-    letter-spacing: 0.05em;
-    white-space: pre;
-  }
-
-  .dim {
-    color: var(--dim);
-    margin-right: var(--u2);
-  }
-
-  /* Main layout */
-  .layout {
-    display: flex;
-    flex-direction: column;
-    min-height: 100vh;
-    transition: opacity 0.3s;
-  }
-
-  .layout.hidden {
-    opacity: 0;
-    pointer-events: none;
-  }
+  /* Layout */
+  .layout { display: flex; flex-direction: column; min-height: 100vh; transition: opacity 0.3s; }
+  .layout.hidden { opacity: 0; pointer-events: none; }
 
   /* Dashboard grid */
   .dashboard {
@@ -266,71 +386,74 @@
     padding: var(--u5) var(--u6);
     align-items: start;
   }
+  @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 580px) { .dashboard { grid-template-columns: 1fr; } }
 
-  @media (max-width: 900px) {
-    .dashboard {
-      grid-template-columns: 1fr 1fr;
-    }
-  }
-
-  @media (max-width: 580px) {
-    .dashboard {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .coming-soon {
-    font-family: var(--font-pixel);
-    font-size: 7px;
-    margin-top: var(--u2);
-    padding-top: var(--u3);
-    border-top: 1px solid var(--dimmer);
-  }
-
-  /* EQ bar placeholder */
-  .eq-placeholder {
+  /* Climate panel layout */
+  .climate-layout {
     display: flex;
-    align-items: flex-end;
-    gap: 4px;
-    height: 90px;
-    padding-bottom: 0;
-    border-bottom: 1px solid var(--dimmer);
-    margin-bottom: var(--u2);
+    gap: var(--u5);
+    align-items: flex-start;
   }
-
-  .eq-col {
+  .climate-readings {
     flex: 1;
-    min-width: 8px;
-    background: var(--dim);
-    position: relative;
     display: flex;
     flex-direction: column;
-    justify-content: flex-start;
+    gap: var(--u4);
   }
 
-  /* Top 3-pixel cap on each EQ bar — color indicates amplitude */
-  .eq-top {
-    height: 4px;
-    width: 100%;
-    flex-shrink: 0;
+  /* CO₂ block */
+  .co2-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--u3);
+    padding-bottom: var(--u4);
+    border-bottom: 1px solid var(--dimmer);
+  }
+  .co2-scale {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-pixel);
+    font-size: 6px;
+    color: var(--dimmer);
+    margin-top: -2px;
+  }
+  .air-secondary {
+    display: flex;
+    flex-direction: column;
+    gap: var(--u4);
+    padding-top: var(--u2);
+  }
+  .awaiting {
+    font-family: var(--font-pixel);
+    font-size: 7px;
+    padding-top: var(--u2);
   }
 
+  /* Audio panel EQ placeholder */
+  .eq-placeholder {
+    display: flex; align-items: flex-end; gap: 4px;
+    height: 90px; border-bottom: 1px solid var(--dimmer); margin-bottom: var(--u2);
+  }
+  .eq-col {
+    flex: 1; min-width: 8px; background: var(--dim);
+    position: relative; display: flex; flex-direction: column; justify-content: flex-start;
+  }
+  .eq-top { height: 4px; width: 100%; flex-shrink: 0; }
   .eq-top--good   { background: var(--status-good);   box-shadow: 0 0 4px var(--status-good);   }
   .eq-top--ok     { background: var(--status-ok);     box-shadow: 0 0 4px var(--status-ok);     }
   .eq-top--warn   { background: var(--status-warn);   box-shadow: 0 0 4px var(--status-warn);   }
   .eq-top--danger { background: var(--status-danger); box-shadow: 0 0 4px var(--status-danger); }
 
-  /* Waveform oscilloscope placeholder */
-  .waveform-placeholder {
-    display: flex;
-    flex-direction: column;
-    gap: var(--u2);
+  /* Waveform placeholder */
+  .waveform-placeholder { display: flex; flex-direction: column; gap: var(--u2); }
+  .waveform-screen {
+    background: var(--bg); border: 1px solid var(--dimmer); padding: var(--u2);
+    box-shadow: inset 0 0 8px rgba(0,255,65,0.04);
   }
 
-  .waveform-screen {
-    background: var(--bg);
-    border: 1px solid var(--dimmer);
-    padding: var(--u2);
-    box-shadow: inset 0 0 8px rgba(0, 255, 65, 0.04);
+  .coming-soon {
+    font-family: var(--font-pixel); font-size: 7px;
+    margin-top: var(--u2); padding-top: var(--u3); border-top: 1px solid var(--dimmer);
   }
 </style>
