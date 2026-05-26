@@ -97,6 +97,33 @@ export const THRESHOLDS = {
   ],
 };
 
+// ---------------------------------------------------------------------------
+// Time formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * Return a human-readable relative time string for an ISO 8601 timestamp.
+ * e.g. "just now", "14s ago", "2m ago", "1h ago"
+ */
+export function formatRelativeTime(isoString) {
+  if (!isoString) return null;
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const s = Math.max(0, Math.floor(diffMs / 1000));
+  if (s < 10)  return 'just now';
+  if (s < 60)  return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60)  return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `${h}h ago`;
+}
+
+/**
+ * Format a Date as HH:MM:SS.
+ */
+export function formatHMS(date) {
+  return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 const BASE = '/api';
 const KEY_STORAGE = 'arkadia_api_key';
 
