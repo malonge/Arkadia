@@ -48,7 +48,15 @@ class SCD40Sensor(I2CBase):
         self._init_hardware()
 
     def _init_hardware(self) -> None:
-        """Open the I2C bus, initialise the SCD4X device, and start periodic measurement."""
+        """Open the I2C bus, initialise the SCD4X device, and start periodic measurement.
+
+        Always stops periodic measurement before starting it.  The SCD40 may
+        already be running from a previous process session (e.g. after a service
+        restart without a full power cycle).  Calling ``start_periodic_measurement``
+        on a sensor that is already measuring causes the command to be silently
+        rejected, leaving the sensor in an unexpected state.  Stopping first
+        guarantees a clean baseline regardless of prior state.
+        """
         try:
             import board  # type: ignore[import-untyped]
             import busio  # type: ignore[import-untyped]
@@ -56,6 +64,16 @@ class SCD40Sensor(I2CBase):
 
             self._i2c = busio.I2C(board.SCL, board.SDA)
             self._scd4x = adafruit_scd4x.SCD4X(self._i2c)
+
+            # Stop any in-progress measurement before starting fresh.
+            # The SCD40 datasheet requires a 500 ms idle period between
+            # stop and the next start command.
+            try:
+                self._scd4x.stop_periodic_measurement()
+                time.sleep(0.6)
+            except Exception:
+                pass  # sensor was idle — not an error
+
             self._scd4x.start_periodic_measurement()
             logger.info(
                 "SCD40 ready at I2C address 0x%02X (bus %d); periodic measurement started",
@@ -108,6 +126,10 @@ class SCD40Sensor(I2CBase):
             deadline = time.monotonic() + _DATA_READY_TIMEOUT
             while not self._scd4x.data_ready:
                 if time.monotonic() >= deadline:
+                    # Invalidate the device handle so the next read() call
+                    # fully reinitialises the sensor (stop → start) rather
+                    # than polling the same stuck device again.
+                    self._scd4x = None
                     raise I2CError(
                         f"SCD40 data_ready timeout after {_DATA_READY_TIMEOUT:.0f}s"
                     )
