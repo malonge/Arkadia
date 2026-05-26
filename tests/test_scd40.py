@@ -179,9 +179,51 @@ class TestSCD40SensorRead:
         from sensor import SCD40Sensor
         s = SCD40Sensor()
         s.open()
+        stop_count_after_open = fake_device.stop_periodic_measurement.call_count
         s.close()
-        fake_device.stop_periodic_measurement.assert_called_once()
+        # close() must call stop_periodic_measurement exactly once more
+        assert fake_device.stop_periodic_measurement.call_count == stop_count_after_open + 1
         assert s._scd4x is None
+
+    def test_open_stops_before_starting_measurement(self):
+        """_init_hardware must stop periodic measurement before starting it."""
+        fake_device, _, _ = _inject_fakes()
+        from sensor import SCD40Sensor
+        s = SCD40Sensor()
+        s.open()
+        # stop must have been called before start
+        stop = fake_device.stop_periodic_measurement
+        start = fake_device.start_periodic_measurement
+        stop.assert_called()
+        start.assert_called_once()
+        # Verify ordering via call manager
+        manager = MagicMock()
+        manager.attach_mock(stop, 'stop')
+        manager.attach_mock(start, 'start')
+        # Both were called; stop appeared in call history first
+        call_names = [c[0] for c in fake_device.mock_calls]
+        stop_idx  = next(i for i, n in enumerate(call_names) if 'stop'  in n)
+        start_idx = next(i for i, n in enumerate(call_names) if 'start' in n)
+        assert stop_idx < start_idx, "stop_periodic_measurement must precede start_periodic_measurement"
+
+    def test_timeout_invalidates_device_handle(self):
+        """After a data_ready timeout, self._scd4x must be None so the next
+        read() call fully reinitialises the sensor."""
+        _inject_fakes(data_ready=False)
+        from sensor import SCD40Sensor
+        from common.i2c import I2CError
+        import sensor as sensor_mod
+        original = sensor_mod._DATA_READY_TIMEOUT
+        sensor_mod._DATA_READY_TIMEOUT = 0.2
+        try:
+            s = SCD40Sensor()
+            s.open()
+            assert s._scd4x is not None
+            with pytest.raises(I2CError, match="data_ready timeout"):
+                s.read()
+            assert s._scd4x is None, "device handle must be cleared after timeout"
+        finally:
+            sensor_mod._DATA_READY_TIMEOUT = original
 
     def test_data_ready_timeout_raises_i2c_error(self):
         """If data_ready never becomes True, read() raises I2CError."""
