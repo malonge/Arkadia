@@ -342,8 +342,10 @@
           <span class="label">{wsConnected ? 'STREAM LIVE' : 'STREAM IDLE'}</span>
         </div>
 
-        <!-- Real-time EQ visualizer -->
-        <EQVisualizer getFrame={getAudioFrame} connected={wsConnected} />
+        <!-- Real-time EQ visualizer.
+             Tune `gain` here: 30 dB lifts typical room audio (-60 to -50 dBFS)
+             into the 50-75% bar range. Raise if bars look flat; lower if clipping. -->
+        <EQVisualizer getFrame={getAudioFrame} connected={wsConnected} gain={30} />
 
         <!-- Real-time waveform oscilloscope.
              Tune `gain` here: 8 = good for typical room audio (-30 to -40 dBFS).

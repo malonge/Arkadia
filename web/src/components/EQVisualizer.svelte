@@ -12,10 +12,17 @@
    * Props:
    *   getFrame   {() => object|null}  Function returning latest AudioStreamPayload
    *   connected  {boolean}            Whether the WebSocket is connected
+   *   gain       {number}             dB boost added to each band before height
+   *                                   mapping (default 30).  Does NOT affect the
+   *                                   color thresholds, which stay anchored to
+   *                                   actual amplitude.  Typical EQ bands for
+   *                                   quiet room audio sit around -60 to -50 dBFS;
+   *                                   gain=30 lifts those into the 50–75 % range.
+   *                                   Raise if bars look flat; lower if they clip.
    */
   import { onMount } from 'svelte';
 
-  let { getFrame = () => null, connected = false } = $props();
+  let { getFrame = () => null, connected = false, gain = 30 } = $props();
 
   let container = $state(null);
   let canvas    = $state(null);
@@ -46,7 +53,10 @@
   }
 
   function levelToBlocks(db) {
-    const ratio = Math.max(0, Math.min(1, (db - FLOOR_DB) / -FLOOR_DB));
+    // Apply gain (dB boost) for display height only.
+    // Clamp so a very high gain never pushes past the top block.
+    const boosted = Math.min(0, db + gain);
+    const ratio   = Math.max(0, Math.min(1, (boosted - FLOOR_DB) / -FLOOR_DB));
     return Math.round(ratio * BLOCKS);
   }
 
