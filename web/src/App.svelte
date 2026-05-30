@@ -343,10 +343,10 @@
         </div>
 
         <!-- Real-time EQ visualizer -->
-        <EQVisualizer {getAudioFrame} connected={wsConnected} />
+        <EQVisualizer getFrame={getAudioFrame} connected={wsConnected} />
 
         <!-- Real-time waveform oscilloscope -->
-        <WaveformScope {getAudioFrame} connected={wsConnected} />
+        <WaveformScope getFrame={getAudioFrame} connected={wsConnected} />
 
         <!-- Summary RMS level from polled /sensors/inmp441 -->
         {#if inmp441.readings}
