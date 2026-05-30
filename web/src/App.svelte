@@ -8,6 +8,7 @@
     fetchHealth,
     fetchSensors,
     fetchSensorStatus,
+    createAudioStream,
     formatRelativeTime,
     formatHMS,
   } from './api.js';
@@ -16,9 +17,11 @@
   import SensorCard    from './components/SensorCard.svelte';
   import StatusBar     from './components/StatusBar.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
-  import ReadingRow    from './components/ReadingRow.svelte';
+  import ReadingRow       from './components/ReadingRow.svelte';
   import TemperatureGauge from './components/TemperatureGauge.svelte';
-  import BarMeter      from './components/BarMeter.svelte';
+  import BarMeter         from './components/BarMeter.svelte';
+  import EQVisualizer     from './components/EQVisualizer.svelte';
+  import WaveformScope    from './components/WaveformScope.svelte';
 
   // ---------------------------------------------------------------------------
   // Settings gate
@@ -110,6 +113,19 @@
   const scdHumStatus  = $derived(statusFor(scdHumPct, THRESHOLDS.humidity_pct));
 
   // ---------------------------------------------------------------------------
+  // WebSocket audio stream
+  // ---------------------------------------------------------------------------
+
+  // Plain mutable variable — not $state — to avoid deep-tracking a large
+  // object (waveform has 2400 samples) at 20 Hz.
+  let latestAudioFrame = null;
+  let wsConnected      = $state(false);
+
+  // Getter function passed to canvas components so they always read the
+  // current frame from inside their rAF loops without needing reactivity.
+  function getAudioFrame() { return latestAudioFrame; }
+
+  // ---------------------------------------------------------------------------
   // Polling
   // ---------------------------------------------------------------------------
   let brokerConnected = $state(false);
@@ -175,12 +191,23 @@
   // ---------------------------------------------------------------------------
   onMount(() => {
     if (apiKey) startBoot();
-    // Start polling after the boot animation, or immediately if already loaded.
+
+    // Start polling after boot animation
     const delay = apiKey ? 1800 : 0;
     pollTimer = setTimeout(schedulePoll, delay);
 
+    // Open WebSocket audio stream immediately (it reconnects automatically)
+    let audioStream = null;
+    if (apiKey) {
+      audioStream = createAudioStream(
+        (frame) => { latestAudioFrame = frame; },
+        (status) => { wsConnected = status === 'connected'; },
+      );
+    }
+
     return () => {
       if (pollTimer) clearTimeout(pollTimer);
+      audioStream?.close();
     };
   });
 </script>
@@ -301,7 +328,7 @@
         {/if}
       </SensorCard>
 
-      <!-- ── AUDIO (INMP441) — placeholder until PR 11 ─────────────── -->
+      <!-- ── AUDIO (INMP441) ────────────────────────────────────────── -->
       <SensorCard
         title={inmp441.title}
         sensorId="inmp441"
@@ -309,51 +336,31 @@
         lastSeen={inmp441.lastSeen}
         stale={inmp441.stale}
       >
-        <!-- EQ bar placeholder with colored tops -->
-        <div class="eq-placeholder" aria-label="Equalizer placeholder">
-          {#each [
-            { h: 6,  top: 'ok'     },
-            { h: 10, top: 'good'   },
-            { h: 8,  top: 'ok'     },
-            { h: 14, top: 'warn'   },
-            { h: 12, top: 'warn'   },
-            { h: 9,  top: 'ok'     },
-            { h: 5,  top: 'good'   },
-            { h: 7,  top: 'ok'     },
-          ] as bar}
-            <div class="eq-col" style="height: {bar.h * 6}px">
-              <div class="eq-top eq-top--{bar.top}"></div>
-            </div>
-          {/each}
+        <!-- WebSocket status badge -->
+        <div class="ws-status">
+          <span class="dot {wsConnected ? 'dot--online' : 'dot--unknown'}">●</span>
+          <span class="label">{wsConnected ? 'STREAM LIVE' : 'STREAM IDLE'}</span>
         </div>
 
-        <!-- Waveform oscilloscope placeholder -->
-        <div class="waveform-placeholder">
-          <span class="label">WAVEFORM</span>
-          <div class="waveform-screen">
-            <svg width="100%" height="48" preserveAspectRatio="none" aria-hidden="true">
-              <polyline
-                points="0,24 20,24 40,23 60,25 80,24 100,24 120,23 140,25 160,24 180,24 200,23 220,25 240,24 260,24 280,23 300,25 320,24"
-                fill="none" stroke="var(--dimmer)" stroke-width="1.5"
-              />
-            </svg>
-          </div>
-        </div>
+        <!-- Real-time EQ visualizer -->
+        <EQVisualizer {getAudioFrame} connected={wsConnected} />
 
+        <!-- Real-time waveform oscilloscope -->
+        <WaveformScope {getAudioFrame} connected={wsConnected} />
+
+        <!-- Summary RMS level from polled /sensors/inmp441 -->
         {#if inmp441.readings}
           {@const dbfs = inmp441.readings.db_level}
           <ReadingRow
-            label="LEVEL"
+            label="RMS (5s AVG)"
             value={dbfs.toFixed(1)}
             unit=" dBFS"
             status={statusFor(dbfs, THRESHOLDS.db_level)}
             sub={`~${dbfsToDB(dbfs).toFixed(1)} dB SPL`}
           />
         {:else}
-          <ReadingRow label="LEVEL" value="——" unit=" dBFS" status="unknown" sub="~—— dB SPL" />
+          <ReadingRow label="RMS (5s AVG)" value="——" unit=" dBFS" status="unknown" sub="~—— dB SPL" />
         {/if}
-
-        <p class="coming-soon muted">LIVE AUDIO IN PR 11</p>
       </SensorCard>
     </main>
 
@@ -430,30 +437,12 @@
     padding-top: var(--u2);
   }
 
-  /* Audio panel EQ placeholder */
-  .eq-placeholder {
-    display: flex; align-items: flex-end; gap: 4px;
-    height: 90px; border-bottom: 1px solid var(--dimmer); margin-bottom: var(--u2);
-  }
-  .eq-col {
-    flex: 1; min-width: 8px; background: var(--dim);
-    position: relative; display: flex; flex-direction: column; justify-content: flex-start;
-  }
-  .eq-top { height: 4px; width: 100%; flex-shrink: 0; }
-  .eq-top--good   { background: var(--status-good);   box-shadow: 0 0 4px var(--status-good);   }
-  .eq-top--ok     { background: var(--status-ok);     box-shadow: 0 0 4px var(--status-ok);     }
-  .eq-top--warn   { background: var(--status-warn);   box-shadow: 0 0 4px var(--status-warn);   }
-  .eq-top--danger { background: var(--status-danger); box-shadow: 0 0 4px var(--status-danger); }
-
-  /* Waveform placeholder */
-  .waveform-placeholder { display: flex; flex-direction: column; gap: var(--u2); }
-  .waveform-screen {
-    background: var(--bg); border: 1px solid var(--dimmer); padding: var(--u2);
-    box-shadow: inset 0 0 8px rgba(0,255,65,0.04);
-  }
-
-  .coming-soon {
-    font-family: var(--font-pixel); font-size: 7px;
-    margin-top: var(--u2); padding-top: var(--u3); border-top: 1px solid var(--dimmer);
+  /* WebSocket stream status */
+  .ws-status {
+    display: flex;
+    align-items: center;
+    gap: var(--u2);
+    padding-bottom: var(--u3);
+    border-bottom: 1px solid var(--dimmer);
   }
 </style>
