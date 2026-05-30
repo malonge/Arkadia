@@ -3,25 +3,30 @@
    * WaveformScope — oscilloscope-style waveform drawn on a <canvas>.
    *
    * The waveform array from the AudioStreamPayload is downsampled to fit the
-   * canvas width.  Y positions are snapped to a 2-pixel grid to give a
-   * chunky, retro oscilloscope feel.  A phosphor glow is applied via
-   * ctx.shadowBlur.
+   * canvas width.  Y positions are snapped to a pixel grid to give a chunky,
+   * retro oscilloscope feel.  A phosphor glow is applied via ctx.shadowBlur.
    *
    * When disconnected, a flat idle line is shown with a slow pulse.
    *
    * Props:
    *   getFrame   {() => object|null}  Function returning latest AudioStreamPayload
    *   connected  {boolean}            Whether the WebSocket is connected
+   *   gain       {number}             Y-axis amplification (default 8).
+   *                                   Typical room audio sits at -30 to -40 dBFS
+   *                                   (amplitude ≈ 0.01–0.03); gain=8 maps those
+   *                                   signals to a clearly visible deflection.
+   *                                   Values are clamped after amplification so
+   *                                   loud signals never clip visually.
    */
   import { onMount } from 'svelte';
 
-  let { getFrame = () => null, connected = false } = $props();
+  let { getFrame = () => null, connected = false, gain = 8 } = $props();
 
   let container = $state(null);
   let canvas    = $state(null);
 
   const HEIGHT_PX  = 72;
-  const GRID_SNAP  = 2;    // snap y to this many pixels for pixelated look
+  const GRID_SNAP  = 1;    // 1px snap — gain already provides the retro stepped look
   const GLOW_COLOR = '#00ff41';
   const IDLE_COLOR = '#003a0e';
 
@@ -32,11 +37,18 @@
   function drawFrame(ctx, w, h, frame, t) {
     ctx.clearRect(0, 0, w, h);
 
-    const midY = h / 2;
+    const midY      = h / 2;
+    const maxDefl   = midY - 2;   // leave 2px margin top and bottom
 
     if (connected && frame?.readings?.waveform?.length > 0) {
       const samples = frame.readings.waveform;
-      const stride  = Math.max(1, Math.floor(samples.length / w));
+
+      // Helper: amplify, clamp, then snap to grid
+      function sampleY(si) {
+        const raw     = samples[Math.min(si, samples.length - 1)];
+        const amp     = Math.max(-1, Math.min(1, raw * gain));
+        return snapY(midY - amp * maxDefl);
+      }
 
       // Draw with phosphor glow
       ctx.strokeStyle = GLOW_COLOR;
@@ -46,10 +58,8 @@
       ctx.beginPath();
 
       for (let px = 0; px < w; px++) {
-        const si  = Math.min(Math.floor(px * samples.length / w), samples.length - 1);
-        const amp = samples[si]; // [-1, 1]
-        const y   = snapY(midY - amp * (midY - 4));
-
+        const si = Math.floor(px * samples.length / w);
+        const y  = sampleY(si);
         if (px === 0) ctx.moveTo(px, y);
         else          ctx.lineTo(px, y);
       }
@@ -59,15 +69,12 @@
 
       // Second pass: crisp bright line on top of glow
       ctx.strokeStyle = '#39ff14';
-      ctx.shadowBlur  = 0;
       ctx.lineWidth   = 1;
       ctx.beginPath();
 
       for (let px = 0; px < w; px++) {
-        const si  = Math.min(Math.floor(px * samples.length / w), samples.length - 1);
-        const amp = samples[si];
-        const y   = snapY(midY - amp * (midY - 4));
-
+        const si = Math.floor(px * samples.length / w);
+        const y  = sampleY(si);
         if (px === 0) ctx.moveTo(px, y);
         else          ctx.lineTo(px, y);
       }

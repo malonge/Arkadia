@@ -345,8 +345,10 @@
         <!-- Real-time EQ visualizer -->
         <EQVisualizer getFrame={getAudioFrame} connected={wsConnected} />
 
-        <!-- Real-time waveform oscilloscope -->
-        <WaveformScope getFrame={getAudioFrame} connected={wsConnected} />
+        <!-- Real-time waveform oscilloscope.
+             Tune `gain` here: 8 = good for typical room audio (-30 to -40 dBFS).
+             Increase if the signal still looks flat; decrease if it clips. -->
+        <WaveformScope getFrame={getAudioFrame} connected={wsConnected} gain={8} />
 
         <!-- Summary RMS level from polled /sensors/inmp441 -->
         {#if inmp441.readings}
