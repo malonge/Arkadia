@@ -83,7 +83,7 @@
       if (connected && frame?.readings?.eq_bands?.levels_db) {
         const db = frame.readings.eq_bands.levels_db[i] ?? FLOOR_DB;
         blocks    = levelToBlocks(db);
-        topStatus = levelToStatus(db);
+        topStatus = levelToStatus(db + gain);  // color matches visual bar height
 
         // Peak hold
         if (db > peaks[i]) {
@@ -133,7 +133,7 @@
       if (connected && peaks[i] > FLOOR_DB + 1) {
         const peakBlocks = levelToBlocks(peaks[i]);
         if (peakBlocks > blocks) {
-          const peakColor = COLOR_STATUS[levelToStatus(peaks[i])];
+          const peakColor = COLOR_STATUS[levelToStatus(peaks[i] + gain)];
           ctx.fillStyle   = peakColor;
           ctx.shadowColor = peakColor;
           ctx.shadowBlur  = 8;
