@@ -48,4 +48,5 @@ Skills are SOPs for specific tasks. Read the relevant skill file before performi
 
 | Skill file | Use when |
 |------------|----------|
+| `.cursor/skills/agent-coder/SKILL.md` | Running as the autonomous daily coding agent ("Badger"): choosing the next unit of work from `docs/dev-plan.md`, and the implement → verify → PR loop |
 | `skills/pi-deployment.md` | Deploying or updating any service on the Raspberry Pi, debugging a failing systemd unit, configuring I2C/I2S hardware, or troubleshooting the audio device |
