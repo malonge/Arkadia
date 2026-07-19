@@ -203,7 +203,7 @@ EOF
 # 5. Per-service Python virtualenvs
 # ---------------------------------------------------------------------------
 
-SERVICES=(bme280 scd40 audio api)
+SERVICES=(bme280 scd40 sgp40 audio api)
 
 create_virtualenvs() {
     local service user="$1"

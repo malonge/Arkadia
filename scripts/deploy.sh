@@ -17,8 +17,8 @@ ENV_FILE="/etc/home-monitor.env"
 
 # Ordered service list: mosquitto is a system service installed separately;
 # sensor services and api are the Arkadia-managed units.
-SENSOR_SERVICES=(bme280 scd40 audio)
-ALL_ARKADIA_SERVICES=(bme280 scd40 audio api)
+SENSOR_SERVICES=(bme280 scd40 sgp40 audio)
+ALL_ARKADIA_SERVICES=(bme280 scd40 sgp40 audio api)
 
 # ---------------------------------------------------------------------------
 # Helpers

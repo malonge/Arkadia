@@ -22,6 +22,7 @@
   import BarMeter         from './components/BarMeter.svelte';
   import EQVisualizer     from './components/EQVisualizer.svelte';
   import WaveformScope    from './components/WaveformScope.svelte';
+  import VocIndicator     from './components/VocIndicator.svelte';
 
   // ---------------------------------------------------------------------------
   // Settings gate
@@ -92,6 +93,7 @@
 
   let bme280  = $state(makeSensor('CLIMATE'));
   let scd40   = $state(makeSensor('AIR QUALITY'));
+  let sgp40   = $state(makeSensor('VOC'));
   let inmp441 = $state(makeSensor('AUDIO'));
 
   // Derived display values for BME280
@@ -111,6 +113,10 @@
   const co2Status     = $derived(statusFor(co2Ppm,    THRESHOLDS.co2_ppm));
   const scdTempStatus = $derived(statusFor(scdTempC,  THRESHOLDS.temperature_c));
   const scdHumStatus  = $derived(statusFor(scdHumPct, THRESHOLDS.humidity_pct));
+
+  // Derived display values for SGP40
+  const vocIndex  = $derived(sgp40.readings?.voc_index ?? null);
+  const vocStatus = $derived(statusFor(vocIndex, THRESHOLDS.voc_index));
 
   // ---------------------------------------------------------------------------
   // WebSocket audio stream
@@ -135,12 +141,13 @@
   let pollTimer       = null;
 
   async function poll() {
-    const [healthRes, sensorsRes, s1Res, s2Res, s3Res] = await Promise.allSettled([
+    const [healthRes, sensorsRes, s1Res, s2Res, s3Res, s4Res] = await Promise.allSettled([
       fetchHealth(),
       fetchSensors(),
       fetchSensorStatus('bme280'),
       fetchSensorStatus('scd40'),
       fetchSensorStatus('inmp441'),
+      fetchSensorStatus('sgp40'),
     ]);
 
     // Broker health
@@ -153,6 +160,7 @@
       const d = sensorsRes.value;
       if (d.bme280)  bme280.readings  = d.bme280.readings;
       if (d.scd40)   scd40.readings   = d.scd40.readings;
+      if (d.sgp40)   sgp40.readings   = d.sgp40.readings;
       if (d.inmp441) inmp441.readings = d.inmp441.readings;
     }
 
@@ -167,6 +175,7 @@
     applyStatus(s1Res, bme280);
     applyStatus(s2Res, scd40);
     applyStatus(s3Res, inmp441);
+    applyStatus(s4Res, sgp40);
 
     // Mark overall poll result
     const anyFailed = [healthRes, sensorsRes].some(r => r.status === 'rejected');
@@ -271,9 +280,9 @@
         </div>
       </SensorCard>
 
-      <!-- ── AIR QUALITY (SCD40) ─────────────────────────────────────── -->
+      <!-- ── AIR QUALITY (SCD40 + SGP40) ────────────────────────────── -->
       <SensorCard
-        title={scd40.title}
+        title="AIR QUALITY"
         sensorId="scd40"
         connectivity={scd40.connectivity}
         lastSeen={scd40.lastSeen}
@@ -324,8 +333,11 @@
             {/if}
           </div>
         {:else}
-          <p class="awaiting muted">AWAITING SENSOR DATA…</p>
+          <p class="awaiting muted">AWAITING CO₂ DATA…</p>
         {/if}
+
+        <!-- SGP40 VOC Index -->
+        <VocIndicator value={vocIndex} status={vocStatus} />
       </SensorCard>
 
       <!-- ── AUDIO (INMP441) ────────────────────────────────────────── -->

@@ -95,6 +95,13 @@ export const THRESHOLDS = {
     [-30,       -10,  'warn'  ],
     [-10,  Infinity,  'danger'],
   ],
+  /** SGP40 VOC Index (Sensirion scale, 1–500; 100 = typical indoor air) */
+  voc_index: [
+    [-Infinity, 101,  'good'  ],   // ≤ 100: cleaner than average
+    [101,       151,  'ok'    ],   // 101–150: good
+    [151,       251,  'warn'  ],   // 151–250: moderate
+    [251,  Infinity,  'danger'],   // > 250: poor / very poor
+  ],
 };
 
 // ---------------------------------------------------------------------------
