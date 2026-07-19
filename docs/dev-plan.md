@@ -354,3 +354,5 @@ The `googlevoicehat-soundcard` ALSA driver used on Pi 5 / Bookworm requires **48
 | systemd hardening directives | PR 3, 4, 5, 6 — all `.service` files |
 | `event` field in structured logs | PR 1 — `common/mqtt.py` and logging setup |
 | Secrets via `EnvironmentFile` only | PR 7 — `setup.sh` scaffolds `/etc/home-monitor.env` |
+| SGP40 VOC Index sensor | SGP40 PR — `services/sgp40/`, `common/models.py`, API `known_ids`, web `VocIndicator` |
+| deploy.sh creates missing virtualenvs | SGP40 docs fix — `ensure_virtualenvs()` in `deploy.sh` |

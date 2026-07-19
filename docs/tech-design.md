@@ -1,8 +1,8 @@
 # Home Environment Monitor — Technical Design Document
 
-**Version:** 1.1  
+**Version:** 1.2  
 **Platform:** Raspberry Pi 5  
-**Last Updated:** May 2026
+**Last Updated:** July 2026
 
 ---
 
@@ -57,6 +57,7 @@ The REST API is the single external interface for all consumers, including:
 |------|------|------|
 | BME280 | I2C | Temperature, humidity, pressure |
 | SCD40 | I2C | CO₂ concentration |
+| SGP40 | I2C | VOC Index (Sensirion scale 1–500) |
 | INMP441 | I2S | Ambient sound level |
 
 **Host Platform:** Raspberry Pi 5  
@@ -70,12 +71,12 @@ The REST API is the single external interface for all consumers, including:
 ┌─────────────────────────────────────────────────────────┐
 │                     Raspberry Pi 5                      │
 │                                                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
-│  │  bme280  │  │  scd40   │  │  audio   │              │
-│  │ service  │  │ service  │  │ service  │              │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘              │
-│       │              │              │                  │
-│       └──────────────┼──────────────┘                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐  │
+│  │  bme280  │  │  scd40   │  │  sgp40   │  │ audio  │  │
+│  │ service  │  │ service  │  │ service  │  │service │  │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └───┬────┘  │
+│       │              │              │             │      │
+│       └──────────────┼──────────────┘─────────────┘     │
 │                      │ MQTT publish                    │
 │                      ▼                                 │
 │             ┌─────────────────┐                       │
@@ -103,6 +104,7 @@ The REST API is the single external interface for all consumers, including:
 | `mosquitto` | MQTT broker | systemd |
 | `bme280` | Python service | systemd |
 | `scd40` | Python service | systemd |
+| `sgp40` | Python service | systemd |
 | `audio` | Python service | systemd |
 | `api` | FastAPI service | systemd |
 
@@ -132,6 +134,12 @@ home-monitor/
 │   │   ├── sensor.py
 │   │   ├── config.toml
 │   │   └── scd40.service
+│   │
+│   ├── sgp40/
+│   │   ├── main.py
+│   │   ├── sensor.py
+│   │   ├── config.toml
+│   │   └── sgp40.service
 │   │
 │   ├── audio/
 │   │   ├── main.py
@@ -226,6 +234,51 @@ Sensor services are synchronous and single-threaded.
 - Topic: `home/sensors/air/scd40`
 - Interval: 60 seconds
 - Aggregation: Median of 3 samples
+
+---
+
+## SGP40 Service
+
+**Responsibility:** Measure indoor air quality as a VOC (Volatile Organic
+Compound) Index.
+
+- Interface: I2C at address `0x59`
+- Library: `adafruit-circuitpython-sgp40`
+- Topic: `home/sensors/air/sgp40`
+- Publish interval: 60 seconds
+- Internal sample rate: 1 Hz (required by the Sensirion VOC Algorithm)
+
+### Polling Loop (SGP40-specific)
+
+The Sensirion VOC Algorithm embedded in the library expects to be called at
+approximately 1-second intervals.  Calling it less frequently causes the
+exponential moving average baseline to drift and degrades index accuracy.
+The service therefore uses a nested loop:
+
+```text
+initialize MQTT + sensor
+loop forever (outer — publish every 60 s):
+    loop forever (inner — sample every 1 s):
+        call measure_index() → VOC Index (1–500)
+        if 60 s elapsed:
+            build SGP40Payload
+            publish to MQTT (QoS 1, retain=true)
+            break inner loop
+        sleep(1 s)
+```
+
+### VOC Index Scale
+
+| Range | Air Quality | Dashboard Color |
+|-------|-------------|-----------------|
+| 1–100 | Excellent (cleaner than average) | Green |
+| 101–150 | Good | Lime |
+| 151–250 | Moderate | Amber |
+| > 250 | Poor / Very Poor | Red |
+
+100 is the algorithm's baseline — values rise when VOC sources (cooking,
+cleaning products, off-gassing, occupancy) are detected above the learned
+background level.
 
 ---
 
@@ -362,6 +415,7 @@ Examples:
 
 - `home/sensors/climate/bme280`
 - `home/sensors/air/scd40`
+- `home/sensors/air/sgp40`
 - `home/sensors/audio/inmp441`
 - `home/sensors/audio/inmp441/stream`
 
@@ -695,11 +749,17 @@ Key models:
 |------|------|
 | `Meta` | Standard aggregation metadata |
 | `StreamMeta` | Extends `Meta` with `window_function` for audio stream frames |
+| `BME280Readings` | Temperature, humidity, pressure |
+| `SCD40Readings` | CO₂ concentration, temperature, humidity |
+| `SGP40Readings` | VOC Index (Sensirion scale 1–500) |
 | `AudioReadings` | Summary audio readings (RMS, dBFS) |
 | `FftBins` | FFT frequency bins (frequencies + magnitudes) |
 | `EqBands` | Octave-band levels for equalizer display |
 | `AudioStreamReadings` | Complete real-time frame (waveform + FFT + EQ bands + RMS) |
-| `AudioPayload` | Typed envelope for the summary topic |
+| `BME280Payload` | Typed envelope for `bme280` readings |
+| `SCD40Payload` | Typed envelope for `scd40` readings |
+| `SGP40Payload` | Typed envelope for `sgp40` readings |
+| `AudioPayload` | Typed envelope for the audio summary topic |
 | `AudioStreamPayload` | Typed envelope for the real-time stream topic |
 
 ## `common/i2c.py`
@@ -938,7 +998,8 @@ A reverse proxy such as nginx can provide:
 |------|------|------|------|
 | `home/sensors/climate/bme280` | 1 | `true` | Climate measurements (temperature, humidity, pressure) |
 | `home/sensors/air/scd40` | 1 | `true` | CO₂ measurements |
+| `home/sensors/air/sgp40` | 1 | `true` | VOC Index (1–500, Sensirion scale) — 60 s interval |
 | `home/sensors/audio/inmp441` | 1 | `true` | Audio summary (RMS amplitude, dBFS level) — 5 s interval |
 | `home/sensors/audio/inmp441/stream` | 0 | `false` | Real-time audio frames (waveform, FFT bins, EQ bands) — 20 Hz |
-| `home/status/{sensor_id}` | 1 | `true` | Optional online/offline LWT status |
+| `home/status/{sensor_id}` | 1 | `true` | Online/offline LWT status for all sensor services |
 

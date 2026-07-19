@@ -188,39 +188,70 @@ mqtt_publish         — Summary: rms=0.00xx dBFS=-5x.x (frames=100, failures=0)
 
 ---
 
+## SGP40 VOC sensor
+
+The SGP40 communicates over I2C at address `0x59`.  No kernel overlays or
+special configuration are required beyond I2C being enabled.
+
+### Expected log output when working
+
+```
+i2c_bus_open    — SGP40 ready at I2C address 0x59 (bus 1)
+status_online   — Published online status
+poll_loop_start — Entering poll loop (sample_interval=1s, publish_interval=60s)
+sensor_read     — VOC Index: 97 (failures: 0)
+```
+
+The VOC Index starts near 100 (algorithm baseline) and typically takes
+5–10 minutes to settle after startup as the Sensirion exponential moving
+average initialises.
+
+### Verify the sensor is publishing
+
+```bash
+mosquitto_sub -h 127.0.0.1 -t 'home/sensors/air/sgp40' -v
+```
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `status=217/USER` | `User=pi` in service file | Edit unit file, change to `User=micheldelving`, `daemon-reload` |
+| `.venv/bin/python: No such file or directory` | Virtualenv never created | `python3 -m venv services/<name>/.venv && services/<name>/.venv/bin/pip install -e . && services/<name>/.venv/bin/pip install -r services/<name>/requirements.txt`; or re-run `sudo bash scripts/setup.sh` |
 | `file:///…/common does not appear to be a Python project` | `pip install -e ./common` | Use `pip install -e .` from repo root |
 | `No input device matching 'plughw:0,0'` | ALSA string passed to sounddevice | Use integer index from `python -m sounddevice` |
 | `ALSA error -22 Invalid argument` | softvol/PortAudio incompatibility | Use hardware device index (`device = 0`) |
 | `arecord -l` shows nothing | Missing dtoverlay or no reboot | Check `/boot/firmware/config.txt`, reboot |
 | Very low RMS, flat waveform | Gain not set | `amixer -D hw:0 sset 'Mic' 10dB` |
 | `Start request repeated too quickly` | Service hit restart rate-limit | `sudo systemctl reset-failed <name>` then `start` |
+| SGP40 VOC Index stuck at 100 | Algorithm still warming up | Normal — allow 5–10 min; index stabilises once baseline is learned |
 
 ---
 
 ## Useful verification commands
 
 ```bash
-# System
+# --- All services ---
+systemctl status bme280 scd40 sgp40 audio api     # quick overview
+journalctl -u <name> -n 50 --no-pager             # last 50 log lines
+journalctl -u <name> -f                           # follow live logs
+sudo systemctl reset-failed <name>                # clear restart rate-limit
+
+# --- MQTT ---
+mosquitto_sub -h 127.0.0.1 -t 'home/sensors/#' -v          # all sensor readings
+mosquitto_sub -h 127.0.0.1 -t 'home/status/#' -v           # online/offline status
+mosquitto_sub -h 127.0.0.1 -t 'home/sensors/air/sgp40' -v  # SGP40 VOC only
+mosquitto_sub -h 127.0.0.1 -t 'home/sensors/audio/#' -v    # audio topics
+
+# --- Audio hardware ---
 arecord -l                                        # list ALSA capture devices
 arecord -D hw:0,0 --dump-hw-params                # show hardware constraints
 services/audio/.venv/bin/python -m sounddevice    # list PortAudio devices
-
-# Service management
-systemctl status audio
-journalctl -u audio -n 50 --no-pager
-journalctl -u audio -f
-sudo systemctl reset-failed audio                 # clear restart rate-limit
-
-# MQTT
-mosquitto_sub -h 127.0.0.1 -t 'home/sensors/audio/#' -v    # both topics
-mosquitto_sub -h 127.0.0.1 -t 'home/sensors/#' -v          # all sensors
-
-# Gain
 amixer -D hw:0                                    # show current mixer controls
 amixer -D hw:0 sset 'Mic' 10dB                   # set capture gain
+
+# --- I2C (BME280, SCD40, SGP40) ---
+i2cdetect -y 1                                    # scan bus 1 — should show 0x59, 0x62, 0x76/0x77
 ```
