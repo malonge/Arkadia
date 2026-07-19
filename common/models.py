@@ -95,6 +95,19 @@ class SCD40Readings(BaseModel):
     humidity_pct: float | None = Field(None, ge=0, le=100, description="Relative humidity in percent (if available)")
 
 
+class SGP40Readings(BaseModel):
+    """VOC Index from the SGP40 gas sensor.
+
+    The VOC Index is a processed integer on the Sensirion scale (1–500).
+    100 represents typical indoor air; values below 100 indicate cleaner-
+    than-average air, values above 100 indicate increasing VOC contamination.
+    """
+
+    voc_index: int = Field(
+        ..., ge=0, le=500, description="VOC Index (Sensirion scale 1–500; 100 = average indoor air)"
+    )
+
+
 class AudioReadings(BaseModel):
     """Ambient sound level from the INMP441 microphone.
 
@@ -202,7 +215,7 @@ class SensorPayload(_UTCTimestampMixin):
     schema_version: Literal[1] = 1
     sensor_id: str = Field(..., min_length=1)
     timestamp: datetime = Field(..., description="UTC ISO 8601 timestamp of the reading")
-    readings: BME280Readings | SCD40Readings | AudioReadings | AudioStreamReadings
+    readings: BME280Readings | SCD40Readings | SGP40Readings | AudioReadings | AudioStreamReadings
     meta: Meta | StreamMeta
     diagnostics: Diagnostics | None = None
 
@@ -230,6 +243,17 @@ class SCD40Payload(_UTCTimestampMixin):
     sensor_id: str = Field("scd40", pattern=r"^scd40$")
     timestamp: datetime
     readings: SCD40Readings
+    meta: Meta
+    diagnostics: Diagnostics | None = None
+
+
+class SGP40Payload(_UTCTimestampMixin):
+    """Fully-typed payload for the SGP40 VOC sensor."""
+
+    schema_version: Literal[1] = 1
+    sensor_id: str = Field("sgp40", pattern=r"^sgp40$")
+    timestamp: datetime
+    readings: SGP40Readings
     meta: Meta
     diagnostics: Diagnostics | None = None
 

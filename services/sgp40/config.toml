@@ -1,0 +1,20 @@
+# SGP40 service configuration.
+# Global broker and logging defaults are loaded from config/global.toml.
+
+[sensor]
+# I2C bus number. On Raspberry Pi, bus 1 is the standard 40-pin header bus.
+i2c_bus = 1
+
+# The SGP40 I2C address is factory-fixed at 0x59.
+i2c_address = 0x59
+
+# How often to publish to MQTT (seconds).
+# The sensor is sampled every 1 s internally to feed the Sensirion VOC
+# Algorithm; this value controls how often the latest index is published.
+publish_interval_seconds = 60
+
+[mqtt]
+topic = "home/sensors/air/sgp40"
+client_id = "sgp40-service"
+qos = 1
+retain = true

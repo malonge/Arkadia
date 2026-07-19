@@ -1,0 +1,39 @@
+[Unit]
+Description=Arkadia SGP40 VOC Sensor Service
+Documentation=https://github.com/malonge/Arkadia
+After=mosquitto.service
+Requires=mosquitto.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Change 'pi' to your actual username.
+User=pi
+Group=i2c
+
+# /etc/home-monitor.env must exist and define ARKADIA_ROOT.
+EnvironmentFile=/etc/home-monitor.env
+
+ExecStart=/bin/bash -c \
+  'exec "${ARKADIA_ROOT}/services/sgp40/.venv/bin/python" \
+        "${ARKADIA_ROOT}/services/sgp40/main.py"'
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+
+RuntimeDirectory=sgp40
+WorkingDirectory=/run/sgp40
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sgp40
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
