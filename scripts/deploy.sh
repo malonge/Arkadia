@@ -150,7 +150,7 @@ start_services() {
     fi
 
     # Sensor services can start in parallel.
-    info "Starting sensor services (bme280, scd40, audio)..."
+    info "Starting sensor services (bme280, scd40, sgp40, audio)..."
     local service
     for service in "${SENSOR_SERVICES[@]}"; do
         if [[ -f "${SYSTEMD_DIR}/${service}.service" ]]; then
@@ -181,7 +181,7 @@ print_status() {
     done
     info ""
     info "View logs with:  journalctl -u <service> -f"
-    info "Full status  :   systemctl status bme280 scd40 audio api"
+    info "Full status  :   systemctl status bme280 scd40 sgp40 audio api"
 }
 
 # ---------------------------------------------------------------------------
