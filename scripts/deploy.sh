@@ -60,6 +60,32 @@ preflight() {
 }
 
 # ---------------------------------------------------------------------------
+# Build the Svelte web dashboard
+# ---------------------------------------------------------------------------
+
+build_web() {
+    local web_dir="${REPO_ROOT}/web"
+
+    if [[ ! -d "${web_dir}" ]]; then
+        warn "web/ directory not found — skipping dashboard build."
+        return
+    fi
+
+    if ! command -v node &>/dev/null; then
+        die "Node.js not found. Run scripts/setup.sh first."
+    fi
+
+    info "Building web dashboard (npm ci + npm run build)..."
+    # Run in a subshell so the working directory change is isolated.
+    (
+        cd "${web_dir}"
+        npm ci --prefer-offline --quiet 2>/dev/null || npm ci --quiet
+        npm run build --silent
+    )
+    info "Web dashboard built → ${web_dir}/dist/"
+}
+
+# ---------------------------------------------------------------------------
 # Ensure each service has a virtualenv (creates one if missing).
 # This makes deploy.sh safe to run after a new service is added without
 # requiring a full setup.sh re-run.
@@ -182,6 +208,7 @@ print_status() {
     info ""
     info "View logs with:  journalctl -u <service> -f"
     info "Full status  :   systemctl status bme280 scd40 sgp40 audio api"
+    info "Dashboard    :   http://$(hostname).local:8000/"
 }
 
 # ---------------------------------------------------------------------------
@@ -194,6 +221,7 @@ info "Repository root : ${REPO_ROOT}"
 info "Service user    : ${SERVICE_USER}"
 
 preflight
+build_web
 ensure_virtualenvs "${SERVICE_USER}"
 install_units "${SERVICE_USER}"
 enable_services
