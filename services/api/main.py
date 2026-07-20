@@ -193,7 +193,7 @@ async def _lifespan(app: FastAPI):
             extra={"event": "mqtt_connect_error"},
         )
 
-    known_ids_raw = sensor_cfg.get("known_ids", ["bme280", "scd40", "inmp441"])
+    known_ids_raw = sensor_cfg.get("known_ids", ["bme280", "scd40", "sgp40", "inmp441"])
     app.state.store = store
     app.state.connectivity = connectivity
     app.state.broadcaster = broadcaster

@@ -19,7 +19,7 @@ from services.api.ws import AudioStreamBroadcaster
 # ---------------------------------------------------------------------------
 
 _API_KEY = "test-secret-key"
-_KNOWN_IDS = {"bme280", "scd40", "inmp441"}
+_KNOWN_IDS = {"bme280", "scd40", "sgp40", "inmp441"}
 _STALE_THRESHOLD = 120
 
 

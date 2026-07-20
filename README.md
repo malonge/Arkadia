@@ -1,6 +1,6 @@
 # Arkadia
 
-Arkadia monitors home environment conditions — temperature, pressure, humidity, CO₂, and ambient sound — using sensors connected to a Raspberry Pi 5.
+Arkadia monitors home environment conditions — temperature, pressure, humidity, CO₂, volatile organic compounds (VOCs), and ambient sound — using sensors connected to a Raspberry Pi 5.  Readings are published to a local MQTT broker, exposed via a REST/WebSocket API, and displayed on a retro-styled web dashboard.
 
 Named after the base camp of the Skaikru in [The 100](https://en.wikipedia.org/wiki/The_100_(TV_series)).
 
@@ -8,15 +8,32 @@ Named after the base camp of the Skaikru in [The 100](https://en.wikipedia.org/w
 
 ## Architecture
 
-Sensor services publish JSON payloads to a local Mosquitto MQTT broker. An API service subscribes to all sensor topics, maintains the latest readings in memory, and exposes them over a REST API.
-
 ```
 bme280 ─┐
-scd40  ─┼──► Mosquitto :1883 ──► API :8000 ──► External consumers
+scd40  ─┤
+sgp40  ─┼──► Mosquitto :1883 ──► API :8000 ──► Web dashboard / external consumers
 audio  ─┘
+              (retained MQTT)    (REST + WebSocket)
 ```
 
-See [`docs/tech-design.md`](docs/tech-design.md) for the full technical design.
+Sensor services publish retained JSON payloads to a local Mosquitto broker.  The API service subscribes to all sensor topics, maintains the latest readings in memory, and exposes them over HTTP and a WebSocket endpoint for real-time audio streaming.
+
+See [`docs/tech-design.md`](docs/tech-design.md) for the full technical design and [`docs/dev-plan.md`](docs/dev-plan.md) for the implementation history.
+
+---
+
+## Sensors
+
+| Sensor  | Interface | I2C Address | Topic                         | Measurements                        |
+|---------|-----------|-------------|-------------------------------|-------------------------------------|
+| BME280  | I2C       | `0x76/0x77` | `home/sensors/climate/bme280` | Temperature, humidity, pressure     |
+| SCD40   | I2C       | `0x62`      | `home/sensors/air/scd40`      | CO₂, temperature, humidity          |
+| SGP40   | I2C       | `0x59`      | `home/sensors/air/sgp40`      | VOC Index (Sensirion scale 1–500)   |
+| INMP441 | I2S       | —           | `home/sensors/audio/inmp441`  | Ambient sound (RMS / dBFS)          |
+
+The audio service also publishes a real-time stream at `home/sensors/audio/inmp441/stream` (QoS 0, non-retained, 20 Hz) for the WebSocket visualizer.
+
+All sensors publish an online/offline status to `home/status/{sensor_id}` via MQTT Last Will and Testament.
 
 ---
 
@@ -25,274 +42,117 @@ See [`docs/tech-design.md`](docs/tech-design.md) for the full technical design.
 ```
 arkadia/
 ├── common/                    # Shared library (config, models, MQTT, I2C)
+│   ├── config.py              # TOML loader, global+local merge
+│   ├── models.py              # Pydantic payload models for all sensors
+│   ├── mqtt.py                # paho-mqtt wrapper, LWT, structured logging
+│   └── i2c.py                 # I2C base class
+│
 ├── services/
-│   ├── bme280/
-│   │   ├── sensor.py          # BME280 driver (wraps adafruit-circuitpython-bme280)
-│   │   ├── main.py            # Polling loop + MQTT publish
-│   │   ├── config.toml        # Sensor and MQTT settings
-│   │   ├── bme280.service     # systemd unit file
-│   │   └── requirements.txt
-│   ├── scd40/
-│   │   ├── sensor.py          # SCD40 driver (wraps adafruit-circuitpython-scd4x)
-│   │   ├── main.py            # Polling loop + MQTT publish
-│   │   ├── config.toml        # Sensor and MQTT settings
-│   │   ├── scd40.service      # systemd unit file
-│   │   └── requirements.txt
-│   ├── audio/                 # Ambient sound service (pending)
-│   └── api/                   # REST API service (pending)
+│   ├── bme280/                # Climate sensor (temperature, humidity, pressure)
+│   ├── scd40/                 # CO₂ sensor
+│   ├── sgp40/                 # VOC sensor
+│   ├── audio/                 # I2S microphone (summary + real-time stream)
+│   └── api/                   # FastAPI REST + WebSocket service
+│
+├── web/                       # Svelte + Vite web dashboard
+│   └── src/
+│       ├── App.svelte         # Three-panel dashboard with polling + WebSocket
+│       ├── api.js             # API client, thresholds, audio stream
+│       └── components/        # Header, SensorCard, ReadingRow, TemperatureGauge,
+│                              # BarMeter, VocIndicator, EQVisualizer, WaveformScope
+│
 ├── config/
 │   └── global.toml            # Shared broker and logging defaults
 ├── mosquitto/
-│   └── mosquitto.conf         # Broker configuration
+│   └── mosquitto.conf         # Broker: localhost-only, anonymous, persistence
 ├── scripts/
-│   ├── setup.sh               # First-time system setup
-│   └── deploy.sh              # Service deployment / restart (pending)
-├── tests/                     # Unit tests (no hardware required)
+│   ├── setup.sh               # First-time system setup (packages, venvs, I2C/I2S)
+│   └── deploy.sh              # Deploy / restart all services
+├── skills/
+│   └── pi-deployment.md       # SOP for deploying and debugging on the Pi
+├── tests/                     # Unit tests — no hardware required
 └── pyproject.toml
-```
-
----
-
-## Development Quick Start
-
-These steps are for running the unit tests on any machine (no hardware required).
-
-Pi OS Bookworm (and any modern Debian/Ubuntu) enforces [PEP 668](https://peps.python.org/pep-0668/) — you cannot install packages into the system Python directly. Always use a virtual environment.
-
-```bash
-# Create and activate a virtualenv
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install the common library in editable mode
-pip install -e .
-
-# Run the tests
-pip install pytest
-pytest
 ```
 
 ---
 
 ## Deploying on Raspberry Pi
 
-### 1. Enable I2C
+### First-time setup
 
 ```bash
-sudo raspi-config
-# → Interface Options → I2C → Enable
-# Reboot after enabling.
-```
-
-Or add the line directly and reboot:
-
-```bash
-echo "dtparam=i2c_arm=on" | sudo tee -a /boot/firmware/config.txt
-sudo reboot
-```
-
-Verify I2C is up and your sensor is visible:
-
-```bash
-sudo apt-get install -y i2c-tools
-i2cdetect -y 1
-```
-
-You should see `76` or `77` in the grid output:
-
-```
-     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
-00:                         -- -- -- -- -- -- -- -- --
-...
-70: -- -- -- -- -- -- 76 --
-```
-
-If your sensor appears at `77` (SDO pin pulled high), edit `services/bme280/config.toml` and change `i2c_address = 0x76` to `i2c_address = 0x77` before continuing.
-
-### 2. Install system packages
-
-```bash
+git clone https://github.com/malonge/Arkadia
+cd Arkadia
 sudo bash scripts/setup.sh
 ```
 
-This installs Mosquitto and applies `mosquitto/mosquitto.conf`.
+`setup.sh` handles everything in one pass:
+- Installs system packages (`mosquitto`, `python3-venv`, `i2c-tools`, `nodejs`, etc.)
+- Configures and starts Mosquitto
+- Enables I2C via `raspi-config`
+- Configures I2S for the INMP441 microphone in `/boot/firmware/config.txt`
+- Creates a Python virtualenv for each service and installs its dependencies
+- Scaffolds `/etc/home-monitor.env` with `ARKADIA_ROOT` and a placeholder `MONITOR_API_KEY`
 
-### 3. Create the environment file
-
-All services read `/etc/home-monitor.env` for the repository root path and any secrets.  Create it before enabling any service:
-
-```bash
-sudo tee /etc/home-monitor.env > /dev/null << EOF
-# Absolute path to the Arkadia repository on this machine.
-ARKADIA_ROOT=/home/$(whoami)/Projects/Arkadia
-EOF
-```
-
-Adjust the path to match where you cloned the repo.
-
-### 4. Set up the BME280 service virtualenv
+After setup, set a real API key:
 
 ```bash
-cd services/bme280
-
-# Create a virtualenv dedicated to this service
-python3 -m venv .venv
-
-# Install the common library from the repo
-.venv/bin/pip install -e ../..
-
-# Install the sensor driver and hardware abstraction layer
-.venv/bin/pip install -r requirements.txt
+sudo nano /etc/home-monitor.env
+# Set MONITOR_API_KEY to a strong random value, e.g.:
+# python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-### 5. Test the service manually before enabling systemd
+If the I2S lines were added to `/boot/firmware/config.txt`, reboot before continuing.
+
+### Deploy
 
 ```bash
-# Make sure Mosquitto is running
-sudo systemctl start mosquitto
-
-# Run the service in the foreground — you should see JSON log lines
-# and retained MQTT messages after ~35 s (5 samples × 0.5 s + 30 s sleep)
-.venv/bin/python main.py
+sudo bash scripts/deploy.sh
 ```
 
-In another terminal, subscribe to verify the payload arrives:
+Copies unit files, fixes `User=` to the actual username, enables all services, and starts them in dependency order (`mosquitto` → sensors → `api`).  Safe to re-run after any code or config change.
+
+### Verify all services are up
 
 ```bash
-mosquitto_sub -h 127.0.0.1 -t 'home/sensors/climate/bme280' -v
+systemctl status bme280 scd40 sgp40 audio api
+journalctl -u sgp40 -f          # follow logs for one service
+mosquitto_sub -h 127.0.0.1 -t 'home/sensors/#' -v    # watch all readings
+mosquitto_sub -h 127.0.0.1 -t 'home/status/#' -v     # watch connectivity
+i2cdetect -y 1                  # should show 0x59, 0x62, 0x76/0x77
 ```
 
-Press Ctrl-C to stop the service once you have confirmed it is working.
-
-### 6. Install and enable the systemd service
-
-```bash
-# Install the service file
-sudo cp services/bme280/bme280.service /etc/systemd/system/
-
-# Change the User= field in the installed copy to your actual username
-sudo sed -i "s/^User=pi$/User=$(whoami)/" /etc/systemd/system/bme280.service
-
-# Confirm it looks right
-grep "^User=" /etc/systemd/system/bme280.service
-
-# Reload systemd and enable
-sudo systemctl daemon-reload
-sudo systemctl enable bme280
-sudo systemctl start bme280
-```
-
-> **Note for Pi 5 / adafruit-blinka:** `lgpio` (the GPIO backend) creates
-> temporary notification files in the service's working directory.
-> `bme280.service` already sets `RuntimeDirectory=bme280` and
-> `WorkingDirectory=/run/bme280` to give it a writable location.  If you
-> ever need to re-apply this fix to an already-installed service file (e.g.
-> after installing from an older commit), use a drop-in override:
-> ```bash
-> sudo mkdir -p /etc/systemd/system/bme280.service.d
-> sudo tee /etc/systemd/system/bme280.service.d/workdir.conf > /dev/null << 'EOF'
-> [Service]
-> RuntimeDirectory=bme280
-> WorkingDirectory=/run/bme280
-> EOF
-> sudo systemctl daemon-reload
-> ```
-
-### 7. Verify
-
-```bash
-# Check service status
-sudo systemctl status bme280
-
-# Watch structured JSON logs
-journalctl -u bme280 -f
-
-# Watch the MQTT topic
-mosquitto_sub -h 127.0.0.1 -t 'home/sensors/climate/bme280' -v
-```
+For detailed per-service deployment steps and troubleshooting, see [`skills/pi-deployment.md`](skills/pi-deployment.md).
 
 ---
 
-## Sensors
+## Web Dashboard
 
-| Sensor  | Interface | Topic                         | Measurements                        | Status  |
-|---------|-----------|-------------------------------|-------------------------------------|---------|
-| BME280  | I2C       | `home/sensors/climate/bme280` | Temperature, humidity, pressure     | ✅ done |
-| SCD40   | I2C       | `home/sensors/air/scd40`      | CO₂, temperature, humidity          | ✅ done |
-| INMP441 | I2S       | `home/sensors/audio/inmp441`  | Ambient sound (RMS / dBFS)          | pending |
+The dashboard is a Svelte + Vite app served from the API at `http://<pi>:8000/` (after PR 12 merges; during development, run it separately on port 5173).
 
-### SCD40 deployment
-
-The SCD40 follows the same deployment steps as the BME280 (see above).
-Key differences:
-
-- **Fixed I2C address:** `0x62` — no SDO pin, no config needed.
-- **Measurement cycle:** The SCD40 produces a new reading every 5 seconds
-  internally.  `read()` blocks until `data_ready` is `True`; collecting 3
-  samples therefore takes ~15 seconds.
-- **Virtualenv setup:**
-  ```bash
-  cd services/scd40
-  python3 -m venv .venv
-  .venv/bin/pip install -e ../..
-  .venv/bin/pip install -r requirements.txt
-  ```
-- **Manual test:**
-  ```bash
-  .venv/bin/python main.py
-  # First reading appears after ~15 s (3 × 5 s cycles)
-  mosquitto_sub -h 127.0.0.1 -t 'home/sensors/air/scd40' -v
-  ```
-- **Systemd install:**
-  ```bash
-  sudo cp services/scd40/scd40.service /etc/systemd/system/
-  sudo sed -i "s/^User=pi$/User=$(whoami)/" /etc/systemd/system/scd40.service
-  sudo systemctl daemon-reload
-  sudo systemctl enable scd40
-  sudo systemctl start scd40
-  journalctl -u scd40 -f
-  ```
-
----
-
-## Mosquitto smoke test
-
-After running `setup.sh`, verify the broker with a publish/subscribe round-trip:
+**Development (SSH tunnel from your Mac):**
 
 ```bash
-# Terminal 1 — subscribe
-mosquitto_sub -h 127.0.0.1 -t 'test/#' -v
+# Mac terminal — forward both ports
+ssh -L 5173:localhost:5173 -L 8000:localhost:8000 micheldelving@<pi-ip>
 
-# Terminal 2 — publish
-mosquitto_pub -h 127.0.0.1 -t 'test/hello' -m 'world'
+# Pi terminal — start the dev server
+cd ~/Projects/Arkadia/web
+npm install       # first time only
+npm run dev
 ```
 
-Expected output in terminal 1:
+Open `http://localhost:5173` in your browser.  The first load shows a settings modal — enter your `MONITOR_API_KEY`.
 
-```
-test/hello world
-```
+**Panels:**
 
-Verify that connections from outside localhost are refused (replace `<pi-ip>` with the Pi's LAN address):
+| Panel | Sensor | Displays |
+|-------|--------|---------|
+| CLIMATE | BME280 | Temperature gauge (16 pixel blocks, color-coded) + humidity + pressure |
+| AIR QUALITY | SCD40 + SGP40 | CO₂ bar meter + temperature/humidity; VOC Index with color indicator |
+| AUDIO | INMP441 | 8-band EQ visualizer (canvas, peak-hold) + waveform oscilloscope + RMS level |
 
-```bash
-mosquitto_pub -h <pi-ip> -t 'test/hello' -m 'world'
-# Expected: Connection refused
-```
-
-View broker logs:
-
-```bash
-journalctl -u mosquitto -f
-```
-
----
-
-## Configuration
-
-- Global defaults: `config/global.toml`
-- Per-service overrides: `services/<name>/config.toml`
-- Paths and secrets: `/etc/home-monitor.env`
+The header shows a live clock, date, and hardcoded location coordinates.  All readings have LED color indicators (green → lime → amber → red) based on health thresholds.
 
 ---
 
@@ -300,12 +160,40 @@ journalctl -u mosquitto -f
 
 Base URL: `http://<pi-hostname>:8000`
 
-| Method | Path                          | Description                     |
-|--------|-------------------------------|---------------------------------|
-| GET    | `/health`                     | Broker connectivity and uptime  |
-| GET    | `/version`                    | Service version and git commit  |
-| GET    | `/sensors`                    | Latest readings from all sensors|
-| GET    | `/sensors/{sensor_id}`        | Latest reading for one sensor   |
-| GET    | `/sensors/{sensor_id}/status` | Staleness metadata              |
+All endpoints except `/health` require `X-API-Key: <key>` (set in `/etc/home-monitor.env`).
 
-All endpoints except `/health` require an `X-API-Key` header.
+| Method    | Path                          | Description                              |
+|-----------|-------------------------------|------------------------------------------|
+| GET       | `/health`                     | Broker connectivity and uptime (no auth) |
+| GET       | `/version`                    | Service version and git commit           |
+| GET       | `/sensors`                    | Latest readings from all sensors         |
+| GET       | `/sensors/{sensor_id}`        | Latest reading for one sensor (200/404/503) |
+| GET       | `/sensors/{sensor_id}/status` | Staleness + connectivity metadata        |
+| WebSocket | `/ws/audio/stream`            | Real-time `AudioStreamPayload` at ~20 Hz |
+
+WebSocket authentication: `?api_key=<key>` query parameter.
+
+---
+
+## Development Quick Start
+
+Run the unit tests on any machine — no hardware required.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+pip install pytest ruff
+pytest          # 283 tests, all pass without hardware
+ruff check .    # linting
+```
+
+---
+
+## Configuration
+
+| File | Purpose |
+|------|---------|
+| `config/global.toml` | Shared broker host/port and logging defaults |
+| `services/<name>/config.toml` | Per-service sensor settings and MQTT topic |
+| `/etc/home-monitor.env` | `ARKADIA_ROOT` path and `MONITOR_API_KEY` secret |

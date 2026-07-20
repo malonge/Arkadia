@@ -147,7 +147,7 @@ def _make_app(
     if connectivity is None:
         connectivity = ConnectivityStore()
     if known_ids is None:
-        known_ids = {"bme280", "scd40", "inmp441"}
+        known_ids = {"bme280", "scd40", "sgp40", "inmp441"}
 
     mock_mqtt = MagicMock()
     mock_mqtt.is_connected = True

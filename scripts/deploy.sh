@@ -60,6 +60,36 @@ preflight() {
 }
 
 # ---------------------------------------------------------------------------
+# Ensure each service has a virtualenv (creates one if missing).
+# This makes deploy.sh safe to run after a new service is added without
+# requiring a full setup.sh re-run.
+# ---------------------------------------------------------------------------
+
+ensure_virtualenvs() {
+    local service_user="$1"
+    local service
+
+    for service in "${ALL_ARKADIA_SERVICES[@]}"; do
+        local svc_dir="${REPO_ROOT}/services/${service}"
+        local venv_dir="${svc_dir}/.venv"
+        local req_file="${svc_dir}/requirements.txt"
+
+        [[ -d "${svc_dir}" ]] || continue
+
+        if [[ ! -d "${venv_dir}" ]]; then
+            info "Creating missing virtualenv for ${service}..."
+            python3 -m venv "${venv_dir}"
+            "${venv_dir}/bin/pip" install --quiet -e "${REPO_ROOT}"
+            if [[ -f "${req_file}" ]]; then
+                "${venv_dir}/bin/pip" install --quiet -r "${req_file}"
+            fi
+            chown -R "${service_user}:${service_user}" "${venv_dir}"
+            info "  ${service} virtualenv ready."
+        fi
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Install service unit files
 # ---------------------------------------------------------------------------
 
@@ -120,7 +150,7 @@ start_services() {
     fi
 
     # Sensor services can start in parallel.
-    info "Starting sensor services (bme280, scd40, audio)..."
+    info "Starting sensor services (bme280, scd40, sgp40, audio)..."
     local service
     for service in "${SENSOR_SERVICES[@]}"; do
         if [[ -f "${SYSTEMD_DIR}/${service}.service" ]]; then
@@ -151,7 +181,7 @@ print_status() {
     done
     info ""
     info "View logs with:  journalctl -u <service> -f"
-    info "Full status  :   systemctl status bme280 scd40 audio api"
+    info "Full status  :   systemctl status bme280 scd40 sgp40 audio api"
 }
 
 # ---------------------------------------------------------------------------
@@ -164,6 +194,7 @@ info "Repository root : ${REPO_ROOT}"
 info "Service user    : ${SERVICE_USER}"
 
 preflight
+ensure_virtualenvs "${SERVICE_USER}"
 install_units "${SERVICE_USER}"
 enable_services
 start_services
