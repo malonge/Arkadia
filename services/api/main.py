@@ -15,6 +15,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.staticfiles import StaticFiles
 
 # Resolve repo root so the common package is importable when this file is
 # executed directly from its own directory.
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _CONFIG_PATH = Path(__file__).parent / "config.toml"
+_WEB_DIST    = _REPO_ROOT / "web" / "dist"
 
 
 def _load_api_config() -> dict[str, Any]:
@@ -214,22 +216,31 @@ async def _lifespan(app: FastAPI):
 # API key middleware
 # ---------------------------------------------------------------------------
 
-_EXEMPT_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
+_EXEMPT_API_PATHS = {"/api/health", "/api/docs", "/api/openapi.json", "/api/redoc"}
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
-    """Validate the X-API-Key header on all non-exempt HTTP routes.
+    """Validate the X-API-Key header on all non-exempt API routes.
 
-    WebSocket routes are validated inside their own handler via the
-    ``api_key`` query parameter.
+    Static file requests (any path not starting with ``/api``) pass through
+    without authentication so the browser can load the dashboard freely.
+    WebSocket auth is handled inside the route handler via the ``api_key``
+    query parameter.
     """
 
     async def dispatch(self, request: Request, call_next: Any) -> Any:
-        # WebSocket upgrades are handled in the route handler.
+        path = request.url.path
+
+        # WebSocket upgrades are authenticated in the route handler.
         if request.headers.get("upgrade", "").lower() == "websocket":
             return await call_next(request)
 
-        if request.url.path in _EXEMPT_PATHS:
+        # Non-API paths serve the static dashboard — no auth required.
+        if not path.startswith("/api"):
+            return await call_next(request)
+
+        # A small set of API paths are public (health check, docs).
+        if path in _EXEMPT_API_PATHS:
             return await call_next(request)
 
         expected: str = request.app.state.api_key
@@ -253,10 +264,26 @@ def create_app() -> FastAPI:
 
     app.add_middleware(APIKeyMiddleware)
 
-    app.include_router(health_module.router)
-    app.include_router(version_module.router)
-    app.include_router(sensors_module.router)
-    app.include_router(audio_module.router)
+    # All API routes live under /api so the root path is free for the
+    # static file mount.
+    app.include_router(health_module.router,   prefix="/api")
+    app.include_router(version_module.router,  prefix="/api")
+    app.include_router(sensors_module.router,  prefix="/api")
+    app.include_router(audio_module.router,    prefix="/api")
+
+    # Serve the built Svelte dashboard from web/dist/ at /.
+    # Must be mounted LAST so /api/* routes are matched first.
+    # html=True makes every unknown path fall back to index.html,
+    # which is required for client-side routing to work correctly.
+    if _WEB_DIST.is_dir():
+        app.mount("/", StaticFiles(directory=str(_WEB_DIST), html=True), name="static")
+    else:
+        logger.warning(
+            "web/dist not found at %s — dashboard will not be served. "
+            "Run scripts/deploy.sh to build it.",
+            _WEB_DIST,
+            extra={"event": "web_dist_missing"},
+        )
 
     return app
 

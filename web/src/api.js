@@ -214,7 +214,7 @@ export function fetchVersion() {
 export function createAudioStream(onFrame, onStatus) {
   const key = getApiKey();
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${protocol}//${location.host}/ws/audio/stream?api_key=${encodeURIComponent(key)}`;
+  const url = `${protocol}//${location.host}/api/ws/audio/stream?api_key=${encodeURIComponent(key)}`;
 
   let ws = null;
   let closed = false;
