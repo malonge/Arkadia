@@ -198,7 +198,16 @@ def main() -> None:
                 "All %d samples failed; skipping cycle", sample_count,
                 extra={"event": "sensor_error"},
             )
-            _stop.wait(timeout=interval)
+            # Sleep only the *remaining* portion of the interval so that the
+            # next publish attempt stays on schedule.  Sleeping the full
+            # interval here would add the sample-collection time (~30 s for
+            # three 10-second timeouts) on top of the previous cycle's sleep,
+            # pushing the gap between publishes to ~136 s and tripping the
+            # 120 s stale threshold.
+            elapsed = time.monotonic() - cycle_start
+            remaining = interval - elapsed
+            if remaining > 0:
+                _stop.wait(timeout=remaining)
             continue
 
         # Compute medians.

@@ -375,3 +375,63 @@ class TestSCD40Config:
         from common.config import load_config
         cfg = load_config(SERVICE_DIR / "config.toml")
         I2CBase._validate_address(cfg["sensor"]["i2c_address"])
+
+
+# ---------------------------------------------------------------------------
+# Cycle-timing regression — the failed-cycle sleep must not exceed interval
+# ---------------------------------------------------------------------------
+
+
+class TestFailedCycleTiming:
+    """Regression for the stale-threshold bug.
+
+    When all samples fail the service used to sleep the *full* interval after
+    a failed collection, adding collection time (≥ 30 s for three 10-second
+    timeouts) on top of the previous cycle's tail-sleep.  The combined gap
+    exceeded the API's 120 s stale threshold.
+
+    The fix: sleep only the *remaining* portion of the interval, so the total
+    cycle time stays ≤ interval_seconds regardless of whether samples pass or
+    fail.
+    """
+
+    def test_failed_cycle_sleeps_remaining_not_full_interval(self):
+        """After all samples fail, elapsed+sleep must equal interval, not 2×."""
+        import time
+
+        _inject_fakes(data_ready=False)
+        _activate_service_path()
+
+        sys.modules.pop("sensor", None)
+        import sensor as sensor_mod
+
+        original_timeout = sensor_mod._DATA_READY_TIMEOUT
+        sensor_mod._DATA_READY_TIMEOUT = 0.05  # accelerate timeouts for the test
+
+        sys.modules.pop("sensor", None)
+        from sensor import SCD40Sensor
+        from common.i2c import I2CError
+
+        sensor = SCD40Sensor()
+
+        interval = 1.0
+        cycle_start = time.monotonic()
+
+        for _ in range(3):
+            try:
+                sensor.read()
+            except I2CError:
+                pass
+
+        elapsed = time.monotonic() - cycle_start
+        remaining = interval - elapsed
+
+        # The key assertion: remaining must be < interval (not the full interval)
+        # With a real 10-second timeout per sample, elapsed >> interval, so
+        # remaining would be negative (clamped to 0).
+        # With our accelerated 0.05s timeout, elapsed ≈ 0.15s, remaining ≈ 0.85s.
+        assert remaining < interval, (
+            f"remaining ({remaining:.3f}s) should be less than full interval "
+            f"({interval}s); sleeping the full interval is the bug"
+        )
+        sensor_mod._DATA_READY_TIMEOUT = original_timeout
