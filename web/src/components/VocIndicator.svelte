@@ -11,8 +11,10 @@
    *   > 250  : POOR+      (red)
    *
    * Props:
-   *   value   {number|null}  VOC Index, or null when no data
-   *   status  {string}       "good" | "ok" | "warn" | "danger" | "unknown"
+   *   value        {number|null}  VOC Index, or null when no data
+   *   status       {string}       "good" | "ok" | "warn" | "danger" | "unknown"
+   *   connectivity {string}       "online" | "offline" | "unknown"
+   *   stale        {boolean}
    */
 
   const LABELS = {
@@ -23,14 +25,22 @@
     unknown: 'NO DATA',
   };
 
-  let { value = null, status = 'unknown' } = $props();
+  let { value = null, status = 'unknown', connectivity = 'unknown', stale = false } = $props();
 
   const label = $derived(LABELS[status] ?? 'NO DATA');
+  const dotClass = $derived(
+    ({ online: 'dot--online', offline: 'dot--offline', unknown: 'dot--unknown' })[connectivity]
+    ?? 'dot--unknown'
+  );
 </script>
 
 <div class="voc-indicator" aria-label="VOC Index: {value ?? 'no data'}, status: {label}">
   <div class="voc-header">
-    <span class="label">VOC INDEX</span>
+    <div class="voc-title-row">
+      <span class="label">VOC INDEX</span>
+      <span class="dot {dotClass}" title="SGP40 connectivity: {connectivity}">●</span>
+      {#if stale}<span class="badge badge--stale">STALE</span>{/if}
+    </div>
     <span class="voc-label-tag label {status}">{label}</span>
   </div>
 
@@ -61,6 +71,13 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: var(--u3);
+  }
+
+  .voc-title-row {
+    display: flex;
+    align-items: center;
+    gap: var(--u2);
   }
 
   .voc-label-tag {

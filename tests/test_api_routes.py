@@ -148,7 +148,7 @@ class TestVersion:
         with _client(app) as c:
             r = c.get("/version", headers={"X-API-Key": _API_KEY})
         body = r.json()
-        assert body["service"] == "home-monitor-api"
+        assert body["service"] == "arkadia-api"
         assert "version" in body
         assert "git_commit" in body
 

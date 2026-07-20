@@ -1,4 +1,3 @@
-.venv/
 # Python
 __pycache__/
 *.py[cod]
@@ -17,6 +16,10 @@ env/
 
 # Pytest
 .pytest_cache/
+
+# Node / web
+node_modules/
+web/dist/
 
 # Editor / OS
 .DS_Store

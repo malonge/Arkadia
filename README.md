@@ -110,7 +110,9 @@ If the I2S lines were added to `/boot/firmware/config.txt`, reboot before contin
 sudo bash scripts/deploy.sh
 ```
 
-Copies unit files, fixes `User=` to the actual username, enables all services, and starts them in dependency order (`mosquitto` → sensors → `api`).  Safe to re-run after any code or config change.
+Builds the web dashboard, refreshes all Python virtualenvs, copies unit files, fixes `User=` to the actual username, enables all services, and starts them in dependency order (`mosquitto` → sensors → `api`). Safe to re-run after any code or config change — virtualenvs and the web build are always refreshed.
+
+Once `deploy.sh` completes, open **`http://raspberrypi.local:8000/`** in your browser. The dashboard loads automatically on every boot without any manual steps.
 
 ### Verify all services are up
 
@@ -160,16 +162,16 @@ The header shows a live clock, date, and hardcoded location coordinates.  All re
 
 Base URL: `http://<pi-hostname>:8000`
 
-All endpoints except `/health` require `X-API-Key: <key>` (set in `/etc/home-monitor.env`).
+All endpoints except `/api/health` require `X-API-Key: <key>` (set in `/etc/home-monitor.env`). The dashboard at `/` is served without authentication.
 
-| Method    | Path                          | Description                              |
-|-----------|-------------------------------|------------------------------------------|
-| GET       | `/health`                     | Broker connectivity and uptime (no auth) |
-| GET       | `/version`                    | Service version and git commit           |
-| GET       | `/sensors`                    | Latest readings from all sensors         |
-| GET       | `/sensors/{sensor_id}`        | Latest reading for one sensor (200/404/503) |
-| GET       | `/sensors/{sensor_id}/status` | Staleness + connectivity metadata        |
-| WebSocket | `/ws/audio/stream`            | Real-time `AudioStreamPayload` at ~20 Hz |
+| Method    | Path                              | Description                              |
+|-----------|-----------------------------------|------------------------------------------|
+| GET       | `/api/health`                     | Broker connectivity and uptime (no auth) |
+| GET       | `/api/version`                    | Service version and git commit           |
+| GET       | `/api/sensors`                    | Latest readings from all sensors         |
+| GET       | `/api/sensors/{sensor_id}`        | Latest reading for one sensor (200/404/503) |
+| GET       | `/api/sensors/{sensor_id}/status` | Staleness + connectivity metadata        |
+| WebSocket | `/api/ws/audio/stream`            | Real-time `AudioStreamPayload` at ~20 Hz |
 
 WebSocket authentication: `?api_key=<key>` query parameter.
 

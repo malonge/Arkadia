@@ -60,6 +60,8 @@ install_packages() {
         python3-dev \
         i2c-tools \
         libasound2-dev \
+        libportaudio2 \
+        portaudio19-dev \
         curl
 }
 

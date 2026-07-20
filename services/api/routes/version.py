@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 router = APIRouter()
 
 _VERSION = "1.1.0"
-_SERVICE = "home-monitor-api"
+_SERVICE = "arkadia-api"
 
 
 def _git_commit() -> str:
