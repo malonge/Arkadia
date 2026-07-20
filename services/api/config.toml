@@ -9,7 +9,7 @@ status_subscription = "home/status/#"
 
 [sensors]
 known_ids = ["bme280", "scd40", "sgp40", "inmp441"]
-stale_threshold_seconds = 120
+stale_threshold_seconds = 300
 
 [auth]
 api_key_env = "MONITOR_API_KEY"

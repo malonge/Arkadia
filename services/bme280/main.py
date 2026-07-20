@@ -217,7 +217,12 @@ def main() -> None:
                 "All %d samples failed; skipping cycle", sample_count,
                 extra={"event": "sensor_error"},
             )
-            _stop.wait(timeout=interval)
+            # Sleep only the *remaining* portion of the interval so the next
+            # publish attempt stays on schedule (same fix as scd40/main.py).
+            elapsed = time.monotonic() - cycle_start
+            remaining = interval - elapsed
+            if remaining > 0:
+                _stop.wait(timeout=remaining)
             continue
 
         # Compute medians
