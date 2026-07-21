@@ -551,6 +551,8 @@ Published to `home/sensors/audio/inmp441/stream` at 20 Hz.
 
 **Base URL:** `http://<pi-hostname>:8000`
 
+The dashboard is served at `/`. All API routes are under `/api/*`.
+
 ## Authentication
 
 Requests must include:
@@ -563,7 +565,7 @@ The API key is stored in an environment variable.
 
 ## Endpoints
 
-### `GET /health`
+### `GET /api/health`
 
 Returns process and broker health.
 
@@ -577,7 +579,7 @@ Returns process and broker health.
 
 ---
 
-### `GET /version`
+### `GET /api/version`
 
 Returns deployment metadata.
 
@@ -591,13 +593,13 @@ Returns deployment metadata.
 
 ---
 
-### `GET /sensors`
+### `GET /api/sensors`
 
 Returns the latest reading from all sensors.
 
 ---
 
-### `GET /sensors/{sensor_id}`
+### `GET /api/sensors/{sensor_id}`
 
 Returns the latest reading for a single sensor.
 
@@ -609,7 +611,7 @@ Returns the latest reading for a single sensor.
 
 ---
 
-### `GET /sensors/{sensor_id}/status`
+### `GET /api/sensors/{sensor_id}/status`
 
 Returns sensor freshness and staleness information.
 
@@ -625,7 +627,7 @@ Returns sensor freshness and staleness information.
 
 ---
 
-### `GET /ws/audio/stream` *(WebSocket)*
+### `GET /api/ws/audio/stream` *(WebSocket)*
 
 Streams real-time `AudioStreamPayload` frames to connected WebSocket clients.
 

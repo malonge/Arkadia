@@ -103,15 +103,18 @@ ensure_virtualenvs() {
         [[ -d "${svc_dir}" ]] || continue
 
         if [[ ! -d "${venv_dir}" ]]; then
-            info "Creating missing virtualenv for ${service}..."
+            info "Creating virtualenv for ${service}..."
             python3 -m venv "${venv_dir}"
-            "${venv_dir}/bin/pip" install --quiet -e "${REPO_ROOT}"
-            if [[ -f "${req_file}" ]]; then
-                "${venv_dir}/bin/pip" install --quiet -r "${req_file}"
-            fi
-            chown -R "${service_user}:${service_user}" "${venv_dir}"
-            info "  ${service} virtualenv ready."
         fi
+
+        # Re-install on every deploy so code/dependency changes are always
+        # picked up without needing a separate setup.sh run.
+        "${venv_dir}/bin/pip" install --quiet -e "${REPO_ROOT}"
+        if [[ -f "${req_file}" ]]; then
+            "${venv_dir}/bin/pip" install --quiet -r "${req_file}"
+        fi
+        chown -R "${service_user}:${service_user}" "${venv_dir}"
+        info "  ${service} virtualenv up to date."
     done
 }
 

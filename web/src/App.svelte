@@ -337,7 +337,12 @@
         {/if}
 
         <!-- SGP40 VOC Index -->
-        <VocIndicator value={vocIndex} status={vocStatus} />
+        <VocIndicator
+          value={vocIndex}
+          status={vocStatus}
+          connectivity={sgp40.connectivity}
+          stale={sgp40.stale}
+        />
       </SensorCard>
 
       <!-- ── AUDIO (INMP441) ────────────────────────────────────────── -->

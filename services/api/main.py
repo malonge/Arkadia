@@ -202,7 +202,7 @@ async def _lifespan(app: FastAPI):
     app.state.mqtt_client = mqtt_client
     app.state.api_key = api_key
     app.state.known_sensor_ids = set(known_ids_raw)
-    app.state.stale_threshold_seconds = sensor_cfg.get("stale_threshold_seconds", 120)
+    app.state.stale_threshold_seconds = sensor_cfg.get("stale_threshold_seconds", 120)  # 2× the slowest sensor interval
 
     logger.info("API service started", extra={"event": "service_started"})
     yield
