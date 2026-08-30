@@ -126,7 +126,7 @@ class AudioReadings(BaseModel):
 class FftBins(BaseModel):
     """FFT frequency spectrum for a single audio frame.
 
-    Contains N/2 bins spanning DC (0 Hz) to the Nyquist frequency
+    Contains N/2 + 1 bins spanning DC (0 Hz) to the Nyquist frequency
     (``sample_rate_hz`` / 2).  Bin spacing is ``sample_rate_hz`` /
     ``window_size`` Hz.  The DC bin (index 0) is included but is typically
     not rendered in visualizations.
