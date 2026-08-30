@@ -13,12 +13,13 @@
    *   getFrame   {() => object|null}  Function returning latest AudioStreamPayload
    *   connected  {boolean}            Whether the WebSocket is connected
    *   gain       {number}             dB boost added to each band before height
-   *                                   mapping (default 30).  Does NOT affect the
-   *                                   color thresholds, which stay anchored to
-   *                                   actual amplitude.  Typical EQ bands for
-   *                                   quiet room audio sit around -60 to -50 dBFS;
-   *                                   gain=30 lifts those into the 50–75 % range.
-   *                                   Raise if bars look flat; lower if they clip.
+   *                                   mapping (default 30).  Also applied before
+   *                                   the color thresholds, so a bar's color
+   *                                   matches the height it is drawn at.  Typical
+   *                                   EQ bands for quiet room audio sit around
+   *                                   -60 to -50 dBFS; gain=30 lifts those into
+   *                                   the 50–75 % range.  Raise if bars look
+   *                                   flat; lower if they clip.
    */
   import { onMount } from 'svelte';
 

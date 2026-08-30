@@ -4,7 +4,7 @@ Publish loop
 ------------
 Each iteration of the main loop blocks in ``sensor.read_frame()`` for
 approximately ``window_size / sample_rate_hz`` seconds (50 ms at the
-default settings of 800 samples @ 16 kHz).
+default settings of 2400 samples @ 48 kHz).
 
 Stream publish (every frame)
     Topic: ``home/sensors/audio/inmp441/stream``

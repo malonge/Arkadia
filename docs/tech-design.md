@@ -491,10 +491,10 @@ Published to `home/sensors/audio/inmp441/stream` at 20 Hz.
   "readings": {
     "sample_rate_hz": 48000,
     "window_size": 2400,
-    "waveform": [0.002, -0.005, 0.011, "...1024 values total..."],
+    "waveform": [0.002, -0.005, 0.011, "...2400 values total..."],
     "fft_bins": {
-      "frequencies_hz": [0.0, 15.625, 31.25, "...512 values total..."],
-      "magnitudes_db": [-80.1, -62.4, -55.0, "...512 values total..."]
+      "frequencies_hz": [0.0, 20.0, 40.0, "...1201 values total..."],
+      "magnitudes_db": [-80.1, -62.4, -55.0, "...1201 values total..."]
     },
     "eq_bands": {
       "bands_hz": [63, 125, 250, 500, 1000, 2000, 4000, 8000],
@@ -504,7 +504,7 @@ Published to `home/sensors/audio/inmp441/stream` at 20 Hz.
     "db_level": -34.9
   },
   "meta": {
-    "sample_count": 1024,
+    "sample_count": 2400,
     "aggregation": "fft",
     "window_function": "hann"
   },
@@ -522,7 +522,7 @@ Published to `home/sensors/audio/inmp441/stream` at 20 Hz.
 | `sample_rate_hz` | `int` | Audio capture sample rate in Hz |
 | `window_size` | `int` | Samples per frame |
 | `waveform` | `float[]` | Time-domain samples, normalised to `[-1.0, 1.0]`; length = `window_size` |
-| `fft_bins.frequencies_hz` | `float[]` | Bin centre frequencies from 0 Hz to Nyquist; length = `window_size / 2` |
+| `fft_bins.frequencies_hz` | `float[]` | Bin centre frequencies from 0 Hz to Nyquist; length = `window_size / 2 + 1` |
 | `fft_bins.magnitudes_db` | `float[]` | Bin magnitude in dBFS; same length as `frequencies_hz` |
 | `eq_bands.bands_hz` | `float[]` | ISO 266 octave-band centre frequencies |
 | `eq_bands.levels_db` | `float[]` | Mean power per band in dBFS |
